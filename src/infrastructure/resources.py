@@ -27,7 +27,7 @@ async def init_resources(settings: Settings) -> AppResources:
         decode_responses=True,
     )
     runtime_checkpointer = RuntimeCheckpointer(postgres_dsn=settings.postgres_dsn)
-    runtime_checkpointer.initialize()
+    await runtime_checkpointer.initialize()
 
     startup_health = await HealthStatus.build(db_engine=db_engine, redis_client=redis_client)
     return AppResources(
@@ -39,7 +39,7 @@ async def init_resources(settings: Settings) -> AppResources:
 
 
 async def close_resources(resources: AppResources) -> None:
-    resources.runtime_checkpointer.close()
+    await resources.runtime_checkpointer.close()
     await resources.redis_client.aclose()
     await resources.db_engine.dispose()
     logger.info("Dependencies closed")

@@ -278,6 +278,17 @@ def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
         missing_payload = missing_trace.json()
         assert missing_payload["code"] == 0
         assert "not found" in missing_payload["message"].lower()
+        assert missing_payload["data"]["error_type"] == "http_error"
+        assert missing_payload["data"]["path"] == "/api/v1/tasks/missing-task/trace"
+        assert missing_payload["data"]["request_id"]
+
+        validation_response = client.post("/api/v1/agents/run", json={})
+        assert validation_response.status_code == 422
+        validation_payload = validation_response.json()
+        assert validation_payload["code"] == 0
+        assert validation_payload["data"]["error_type"] == "validation_error"
+        assert validation_payload["data"]["path"] == "/api/v1/agents/run"
+        assert validation_payload["data"]["request_id"]
 
 
 def test_health_check_with_runtime_resources(monkeypatch: MonkeyPatch) -> None:
@@ -304,3 +315,41 @@ def test_health_check_with_runtime_resources(monkeypatch: MonkeyPatch) -> None:
         response = client.get("/health")
 
     assert response.status_code == 200
+
+
+def test_internal_error_response_contains_diagnostics(monkeypatch: MonkeyPatch) -> None:
+    app = create_app()
+    manager = AgentManager.for_tests(repository=InMemoryRuntimeRepository())
+    fake_resources = SimpleNamespace(
+        db_engine=object(),
+        redis_client=object(),
+        runtime_checkpointer=RuntimeCheckpointer(in_memory=True),
+        startup_health=SimpleNamespace(db=True, redis=True),
+    )
+
+    async def fake_init_resources(_: object) -> object:
+        return fake_resources
+
+    async def fake_close_resources(_: object) -> None:
+        return None
+
+    async def boom(*_: object, **__: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(app_module, "init_resources", fake_init_resources, raising=False)
+    monkeypatch.setattr(app_module, "close_resources", fake_close_resources, raising=False)
+    monkeypatch.setattr(manager, "run_agent", boom)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        app.state.agent_manager = manager
+        response = client.post(
+            "/api/v1/agents/run?agent_id=test-agent",
+            json={"goal": "x", "thread_id": "t1"},
+        )
+
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload["code"] == 0
+    assert payload["data"]["error_type"] == "internal_error"
+    assert payload["data"]["path"] == "/api/v1/agents/run"
+    assert payload["data"]["exception"] == "RuntimeError"

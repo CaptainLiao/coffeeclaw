@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse, urlunparse
@@ -22,7 +22,7 @@ class RuntimeCheckpointer:
     in_memory: bool = False
 
     def __post_init__(self) -> None:
-        self._context: AsyncIterator[AsyncPostgresSaver] | None = None
+        self._context: AbstractAsyncContextManager[AsyncPostgresSaver] | None = None
         self._checkpointer: BaseCheckpointSaver[Any] | None = None
 
     async def initialize(self) -> BaseCheckpointSaver[Any]:
@@ -34,7 +34,7 @@ class RuntimeCheckpointer:
             return self._checkpointer
 
         self._context = AsyncPostgresSaver.from_conn_string(to_checkpoint_dsn(self.postgres_dsn))
-        checkpointer = await self._context.__anext__()
+        checkpointer = await self._context.__aenter__()
         await checkpointer.setup()
         self._checkpointer = checkpointer
         return checkpointer
@@ -49,6 +49,6 @@ class RuntimeCheckpointer:
 
     async def close(self) -> None:
         if self._context is not None:
-            await self._context.aclose()
+            await self._context.__aexit__(None, None, None)
             self._context = None
         self._checkpointer = None
