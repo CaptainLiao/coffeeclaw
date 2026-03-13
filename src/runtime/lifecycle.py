@@ -190,19 +190,18 @@ class AgentManager:
         if agent is None:
             raise ValueError(f"Agent {agent_id} not found.")
 
-        task = await self._repository.get_resumable_task(agent_id, thread_id)
-        if task is None:
-            task = await self._repository.create_task(
-                agent_id=agent_id,
-                goal=goal,
-                thread_id=thread_id,
-                status="running",
-            )
-        elif task.goal != goal:
+        resumable_task = await self._repository.get_resumable_task(agent_id, thread_id)
+        if resumable_task is not None:
             raise ValueError(
-                f"Thread {thread_id} already has resumable task {task.id} "
-                f"with goal '{task.goal}'. Use resume or a new thread_id."
+                f"Thread {thread_id} already has {resumable_task.status} task "
+                f"{resumable_task.id}. Use resume for this thread or a new thread_id."
             )
+        task = await self._repository.create_task(
+            agent_id=agent_id,
+            goal=goal,
+            thread_id=thread_id,
+            status="running",
+        )
 
         await self._repository.update_agent_status(agent_id, "running")
         await self._repository.update_task_status(
@@ -221,7 +220,22 @@ class AgentManager:
         )
         return await self._finalize_result(agent_id, task.id, state)
 
-    async def pause_agent(self, agent_id: str) -> dict[str, Any]:
+    async def pause_agent(self, agent_id: str, *, thread_id: str) -> dict[str, Any]:
+        task = await self._repository.get_resumable_task(agent_id, thread_id)
+        if task is None:
+            latest_task = await self._repository.get_task_by_thread(agent_id, thread_id)
+            if latest_task is None:
+                raise ValueError(f"No task found for agent {agent_id} and thread {thread_id}.")
+            raise ValueError(
+                f"Task {latest_task.id} cannot be paused because "
+                f"it is in status '{latest_task.status}'."
+            )
+
+        await self._repository.update_task_status(
+            task.id,
+            status="paused",
+            current_step=task.current_step,
+        )
         await self._repository.update_agent_status(agent_id, "paused")
         return {"agent_id": agent_id, "status": "paused"}
 
@@ -246,6 +260,10 @@ class AgentManager:
             )
             raise ValueError(
                 message
+            )
+        if task.status != "paused":
+            raise ValueError(
+                f"Task {task.id} is in status '{task.status}', only paused tasks can be resumed."
             )
 
         await self._repository.update_agent_status(agent_id, "running")

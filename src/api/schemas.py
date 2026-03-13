@@ -37,6 +37,10 @@ class AgentResumeRequest(BaseModel):
     thread_id: str
 
 
+class AgentPauseRequest(BaseModel):
+    thread_id: str
+
+
 class AgentSummaryResponse(BaseModel):
     agent_id: str
     status: str

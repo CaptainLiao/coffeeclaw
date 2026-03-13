@@ -149,7 +149,7 @@ async def test_run_agent_reuses_only_resumable_task() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_agent_rejects_goal_change_on_same_resumable_thread() -> None:
+async def test_run_agent_rejects_when_thread_has_resumable_task() -> None:
     repository = InMemoryRuntimeRepository()
     manager = AgentManager.for_tests(repository=repository)
     created = await manager.create_agent(config_path=str(CONFIG_PATH))
@@ -162,10 +162,10 @@ async def test_run_agent_rejects_goal_change_on_same_resumable_thread() -> None:
     )
     assert paused["status"] == "paused"
 
-    with pytest.raises(ValueError, match="already has resumable task"):
+    with pytest.raises(ValueError, match="Use resume"):
         await manager.run_agent(
             created["agent_id"],
-            goal="different goal",
+            goal="first goal",
             thread_id="thread-goal-locked",
         )
 
@@ -197,8 +197,37 @@ async def test_memory_messages_do_not_duplicate_between_steps() -> None:
 async def test_pause_agent_raises_for_missing_agent() -> None:
     manager = AgentManager.for_tests(repository=InMemoryRuntimeRepository())
 
-    with pytest.raises(ValueError, match="not found"):
-        await manager.pause_agent("missing-agent")
+    with pytest.raises(ValueError, match="No task found"):
+        await manager.pause_agent("missing-agent", thread_id="missing-thread")
+
+
+@pytest.mark.asyncio
+async def test_pause_agent_sets_task_paused_and_run_requires_resume() -> None:
+    repository = InMemoryRuntimeRepository()
+    manager = AgentManager.for_tests(repository=repository)
+    created = await manager.create_agent(config_path=str(CONFIG_PATH))
+
+    await manager.run_agent(
+        created["agent_id"],
+        goal="pause flow",
+        thread_id="thread-pause-flow",
+        stop_after_steps=1,
+    )
+    paused = await manager.pause_agent(created["agent_id"], thread_id="thread-pause-flow")
+    assert paused["status"] == "paused"
+
+    with pytest.raises(ValueError, match="Use resume"):
+        await manager.run_agent(
+            created["agent_id"],
+            goal="pause flow",
+            thread_id="thread-pause-flow",
+        )
+
+    resumed = await manager.resume_agent(
+        created["agent_id"],
+        thread_id="thread-pause-flow",
+    )
+    assert resumed["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -258,6 +287,12 @@ def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
         run_payload = run_response.json()
         assert run_payload["code"] == 1
         assert run_payload["data"]["status"] == "completed"
+
+        pause_response = client.post(
+            f"/api/v1/agents/pause?agent_id={agent_id}",
+            json={"thread_id": "thread-api"},
+        )
+        assert pause_response.status_code == 400
 
         status_response = client.get(f"/api/v1/agents/status?agent_id={agent_id}")
         assert status_response.status_code == 200

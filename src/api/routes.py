@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.dependencies import get_agent_manager
 from src.api.schemas import (
+    AgentPauseRequest,
     AgentResumeRequest,
     AgentRunRequest,
     AgentRunResponse,
@@ -78,10 +79,14 @@ async def get_agent_status(
 )
 async def pause_agent(
     agent_id: Annotated[str, Query(description="Agent ID")],
+    request: AgentPauseRequest,
     manager: Annotated[AgentManager, Depends(get_agent_manager)],
 ) -> SuccessResponse[AgentSummaryResponse]:
     try:
-        result = await manager.pause_agent(agent_id)
+        result = await manager.pause_agent(
+            agent_id,
+            thread_id=request.thread_id,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SuccessResponse(data=AgentSummaryResponse(**result))
