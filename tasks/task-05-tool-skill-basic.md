@@ -1,7 +1,7 @@
 # Task 05 — 工具与 Skill 系统基础版
 
 **所属阶段**：Phase 1（第 1-2 个月）  
-**交付标准**：Agent 可注册工具（MCP 协议）并在 Docker 容器中隔离执行；可动态装载 `SKILL.md` 技能文件，将其 Prompt 注入 System 上下文
+**交付标准**：Agent 可注册工具（MCP 协议）并通过统一执行器接口完成调用；可动态装载 `SKILL.md` 技能文件，将其 Prompt 注入 System 上下文；Docker 隔离执行提供可替换实现与冒烟验证
 
 ---
 
@@ -44,19 +44,16 @@ CoffeeClaw 的工具与 Skill 系统形成 `Agent → Skill → Tool` 的调用�
   - `load_from_dir(dir_path)` — 批量扫描 `configs/tools/` 目录，加载所有 JSON 定义
 - [ ] 应用启动时（FastAPI lifespan）自动调用 `load_from_dir` 完成初始注册
 
-### 3. Docker 容器隔离执行（`src/tools/docker/`）
-- [ ] 实现 `DockerToolExecutor` 类：
-  - **容器池管理**：维护预热容器池（`asyncio.Queue`），避免每次冷启动
-  - `execute(tool_def, input_params, credentials)` 方法：
-    1. 从容器池获取或新建容器
-    2. 通过 **环境变量注入** API 凭证（不暴露于 LLM 上下文）
-    3. 应用网络策略（仅允许 `tool_def.execution.required_permissions` 中声明的域名）
-    4. 在容器内执行工具代码，设置 `timeout_ms` 超时
-    5. 收集 stdout/stderr，解析返回结果 JSON
-    6. 将容器归还池或定期回收
-  - **重试逻辑**：基于 `tenacity`，遵循 `tool_def.execution.retry` 配置（指数退避）
-  - **资源限制**：容器启动时设置 CPU/内存硬上限（通过 Docker SDK）
-- [ ] 实现 `ToolExecutorFactory.get(sandbox_type)` — 根据沙箱类型返回对应执行器（v1 仅 docker，接口预留 wasm）
+### 3. 执行器分层与 Docker 实现（`src/tools/docker/`）
+- [ ] 定义统一 `ToolExecutor` 协议与 `ToolExecutorFactory.get(sandbox_type)`（接口优先，支持后续 wasm）
+- [ ] 先落地一个本地/进程内执行器用于主流程联调与单测，确保 Task 02 `act` 节点可先无阻塞接入
+- [ ] 实现 `DockerToolExecutor` 基础版（可替换）：
+  - `execute(tool_def, input_params, credentials)` 支持超时、结果解析、异常归一化
+  - 支持凭证环境变量注入与最小资源限制
+- [ ] 高复杂能力拆分为后续增强项（不阻塞本任务收口）：
+  - 容器池预热与回收策略
+  - 细粒度网络白名单策略
+  - 完整重试编排与故障注入测试
 
 ### 4. 工具调用门面（`src/tools/__init__.py`）
 - [ ] 实现 `ToolCaller` 类，供 Runtime `act` 节点调用：
@@ -104,7 +101,8 @@ CoffeeClaw 的工具与 Skill 系统形成 `Agent → Skill → Tool` 的调用�
 
 ## 验收标准
 - [ ] 扫描 `configs/tools/` 目录，所有工具定义自动注册到 Registry
-- [ ] 通过 `ToolCaller.call("echo", {"message": "hello"})` 成功在 Docker 容器内执行并返回结果
+- [ ] 通过 `ToolCaller.call("echo", {"message": "hello"})` 成功执行并返回结果（默认执行器）
+- [ ] `DockerToolExecutor` 完成至少 1 条工具调用冒烟测试（可在集成测试或手工验收中完成）
 - [ ] `blocked_actions` 策略生效：调用被禁止的工具时返回 `PermissionError`
 - [ ] `configs/skills/demo-skill/SKILL.md` 加载后，Skill Prompt 正确注入 Agent System Prompt
 - [ ] 工具调用记录准确写入 `tool_logs` 表（含 `latency_ms`、`success`）
@@ -112,8 +110,8 @@ CoffeeClaw 的工具与 Skill 系统形成 `Agent → Skill → Tool` 的调用�
 ---
 
 ## 依赖关系
-- **前置**：Task 01（项目初始化，Docker 环境可用）、Task 03（工具日志写入 State Store）
-- **后置**：Task 02（Runtime act 节点调用 ToolCaller）、Task 06（多 Agent 共享工具注册表）
+- **前置**：Task 01（项目初始化，Docker 环境可用）、Task 02（Runtime 主干已落地）、Task 03（工具日志写入 State Store）
+- **后置**：Task 06（多 Agent 共享工具注册表）
 
 ---
 

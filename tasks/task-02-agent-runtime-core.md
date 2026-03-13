@@ -138,8 +138,8 @@ Agent Runtime 是 CoffeeClaw 的核心，基于 **LangGraph** 实现 `感知(sen
 ---
 
 ## 依赖关系
-- **前置**：Task 01（项目初始化）、Task 03（Memory 基础版，至少 Redis 短期记忆可用）、Task 04（模型服务层基础版）
-- **后置**：Task 06（多 Agent 编排）、Task 07（固定工作流）
+- **前置**：Task 01（项目初始化）
+- **后置**：Task 03（替换短期记忆实现）、Task 04（替换模型实现）、Task 05（替换工具执行实现）、Task 06（多 Agent 编排）、Task 07（固定工作流）
 
 ---
 

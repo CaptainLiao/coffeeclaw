@@ -25,7 +25,7 @@
       id UUID PRIMARY KEY,
       agent_id UUID REFERENCES agents(id),
       content TEXT NOT NULL,          -- 经验/知识明文
-      embedding vector(1536),         -- 向量维度随 Embed 模型而定，如 OpenAI是 1536
+      embedding vector,               -- 维度由配置确定，避免与特定 embedding 模型强耦合
       metadata JSONB,                 -- 额外标签 (领域、任务ID、创建时间)
       access_count INT DEFAULT 0,     -- 访问频次（用于遗忘淘汰衰减）
       created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -37,11 +37,15 @@
 ### 2. Embedding 模型接入（`src/model/provider.py` 扩展）
 - [ ] 在 LiteLLM 封装内增加 `async_embedding(text: str, model: str)` 方法
 - [ ] 支持统一调用 OpenAI `text-embedding-3-small` 或本地 BGE 等模型获取向量数组
+- [ ] 在配置中新增并使用：
+  - `embedding_model`
+  - `embedding_dimension`
+  - `memory_similarity_threshold`
 
 ### 3. LongTermMemory 核心实现（`src/memory/longterm.py`）
 - [ ] 使用 SQLAlchemy 映射表模型（包括 `Mapped[Vector]` 的支持语句）
 - [ ] `add_memory(agent_id, content, metadata=None)`：获得文本 Embedding 并写入 DB
-- [ ] `search_memories(agent_id, query_text, top_k=3, threshold=0.7)`：
+- [ ] `search_memories(agent_id, query_text, top_k=3, threshold=None)`（默认读取配置）：
   1. 通过 API 获取 Query Embedding
   2. 使用 pgvector 的余弦相似度操作符 (`<=>`) 在库中查找最匹配记录
   3. 查到后自动更新该记录的 `last_accessed_at` 和 `access_count`
@@ -66,7 +70,7 @@
 ## 验收标准
 - [ ] 第一轮对话：告诉 Agent "我对靠窗位置晕车，请以后帮我定过道"，Agent 完成订票并生成反思经验存入 PG
 - [ ] 第二轮会话（清空 redis 或新建 thread_id 后）：新建订票任务，不再提醒晕车，但 Agent 自动在 prompt 里搜寻到 pgvector 中此用户的喜好，选择过道座位
-- [ ] 长期记忆查询时间 P99 <= 20ms（Pg 索引有效运作）
+- [ ] 记忆检索命中/未命中与相似度阈值行为可观测，查询时延通过 Task 10 指标与压测场景验收
 
 ---
 

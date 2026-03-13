@@ -1,7 +1,7 @@
 # Task 03 — Memory System 基础版
 
 **所属阶段**：Phase 1（第 1-2 个月）  
-**交付标准**：Short-term Memory（Redis）与 State Store（Postgres）可用，Agent 可在多轮对话中保持上下文连贯
+**交付标准**：Short-term Memory（Redis）可用，并与现有 Runtime State Store（Postgres）打通，Agent 可在多轮对话中保持上下文连贯
 
 ---
 
@@ -30,28 +30,19 @@ Long-term Memory（pgvector 向量检索）在 Phase 2 Task 08 中实现。
 - [ ] **滑动窗口压缩**：当消息数超过阈值（如 100 条）时，保留最近 50 条 + 生成摘要存入 `session:{id}:summary`
 - [ ] **Token 预算管理**：`get_context_within_budget(session_id, max_tokens)` — 根据 Token 数限制动态裁剪历史
 
-### 3. Postgres 异步连接管理（`src/memory/statestore.py`）
-- [ ] 使用 `SQLAlchemy 2.0 async engine` 创建异步连接池
-- [ ] 实现 `get_db_session()` 异步上下文管理器
-- [ ] 在 FastAPI 启动生命周期中初始化连接池，关闭时 dispose
+### 3. State Store 连接与仓储复用（`src/runtime/repository.py`）
+- [ ] 复用当前 Runtime 已落地的 State Store 仓储实现，避免在 `src/memory/` 再新增一套平行 ORM
+- [ ] 对现有仓储补齐 Memory 场景所需接口（如 trace 查询、token_usage/tool_logs 写入辅助）
+- [ ] 统一由应用资源层维护连接生命周期，不重复初始化 Postgres 连接池
 
-### 4. State Store CRUD（`src/memory/statestore.py`）
-- [ ] 基于 PRD 2.4.3 节的表结构，定义 SQLAlchemy ORM 模型：
-  - `AgentModel`（对应 `agents` 表）
-  - `TaskModel`（对应 `tasks` 表）
-  - `TaskStepModel`（对应 `task_steps` 表）
-  - `ToolLogModel`（对应 `tool_logs` 表）
-- [ ] 实现 `AgentStateStore` 类，提供：
-  - `create_agent(config: AgentConfig)` → 写入 `agents` 表，返回 `agent_id`
-  - `update_agent_status(agent_id, status)` → 更新状态字段
-  - `create_task(agent_id, goal)` → 写入 `tasks` 表，返回 `task_id`
-  - `update_task_status(task_id, status, dag=None)` → 更新任务状态
-  - `append_task_step(task_id, step: TaskStepData)` → 写入单步执行记录
-  - `append_tool_log(task_step_id, log: ToolLogData)` → 写入工具调用日志
-  - `get_task_trace(task_id)` → 查询完整执行轨迹（步骤 + 工具日志）
+### 4. State Store CRUD 增强（`src/runtime/repository.py`）
+- [ ] 基于 PRD 2.4.3 节表结构，检查并补齐现有仓储能力：
+  - `agents` / `tasks` / `task_steps` / `tool_logs` 的读写接口完整性
+  - `get_task_trace(task_id)` 查询完整执行轨迹（步骤 + 工具日志）
+- [ ] 统一 Runtime 与 Memory 的状态持久化入口，禁止出现 `runtime.repository` 与 `memory.statestore` 双轨实现
 
 ### 5. Memory 门面类（`src/memory/__init__.py`）
-- [ ] 实现 `MemoryManager` 门面类，组合 `ShortTermMemory` 与 `AgentStateStore`
+- [ ] 实现 `MemoryManager` 门面类，组合 `ShortTermMemory` 与 Runtime 仓储接口
 - [ ] 提供统一接口供 Runtime 调用：
   - `save_turn(session_id, user_msg, assistant_msg)` — 保存一轮对话
   - `load_context(session_id, max_tokens)` — 加载上下文
@@ -80,8 +71,8 @@ Long-term Memory（pgvector 向量检索）在 Phase 2 Task 08 中实现。
 ---
 
 ## 依赖关系
-- **前置**：Task 01（项目初始化，Docker Compose 中 Redis + Postgres 可用）
-- **后置**：Task 02（Runtime 核心循环使用 Memory）、Task 08（在此基础上扩展 Long-term Memory）
+- **前置**：Task 01（项目初始化，Docker Compose 中 Redis + Postgres 可用）、Task 02（Runtime 主干已落地）
+- **后置**：Task 04（写入 token_usage 等模型数据）、Task 05（写入工具审计数据）、Task 08（在此基础上扩展 Long-term Memory）
 
 ---
 

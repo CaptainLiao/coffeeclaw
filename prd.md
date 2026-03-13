@@ -779,8 +779,12 @@ coffeeclaw/
 
 **当前实现备注**：
 - Task 01 已先落地应用装配、健康检查、容器化开发环境、CI 与基础日志能力。
+- Task 02 已落地 Runtime 主干与生命周期，当前 `sense/think/act` 仍允许以 mock 适配器运行。
 - `core / infrastructure / services` 当前仅作为薄共享层使用，用于支撑 FastAPI 启动、资源连接与系统级健康检查。
-- 后续进入 Task 02+ 时，业务能力应优先沉入 `runtime / memory / model / tools / orchestrator / workflow`，避免把平台核心逻辑堆入通用目录。
+- 后续进入 Task 03+ 时，业务能力应优先沉入 `runtime / memory / model / tools / orchestrator / workflow`，避免把平台核心逻辑堆入通用目录。
+- 建议执行顺序：`Task 03（Memory）→ Task 04（Model）→ Task 05（Tools/Skill）`，逐步替换 Task 02 中的 mock 适配器，而不是重写 Runtime 主干。
+- `runtime/repository.py` 作为 Phase 1 的统一 State Store 入口，避免在 `memory/` 目录再维护一套平行 `statestore` 实现。
+- 性能 SLA（如模型推理 P99、长期记忆检索 P99）优先通过 Task 10 指标与压测验收，不与各功能任务的最小可用验收绑定。
 
 **交付标准**：单个 Agent 可执行多步工具调用完成任务。
 

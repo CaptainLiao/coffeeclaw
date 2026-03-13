@@ -21,6 +21,8 @@
   - **Histogram**: `tool_execution_duration_seconds` (labels: `tool_name`)
   - **Counter**: `tool_execution_errors_total` (labels: `tool_name`, `error_type`)
   - **Gauge**: `docker_sandbox_pool_active` (监控沙箱并发使用率)
+  - **Histogram**: `model_inference_duration_seconds`（用于承接 Task 04 的延迟目标）
+  - **Histogram**: `memory_longterm_query_duration_seconds`（用于承接 Task 08 的检索时延目标）
 
 ### 2. OpenTelemetry 链路追踪（`src/observability/tracing.py`）
 - [ ] 配置 `opentelemetry-sdk`，针对 FastAPI、SQLAlchemy、Redis 分别注入 Auto-instrumentation
@@ -55,6 +57,7 @@
 - [ ] 打开 Grafana 地址，能看到 Agent 处理任务的成功率曲线、模型消耗 Token 柱状图
 - [ ] 发起调用后产生错误，打开 Jaeger 能看到具体 Span 瀑布图，看到哪一步（是 LLM 等太久，还是 Tool 执行错）崩溃，并且 Log 带相同的 `trace_id`
 - [ ] 所有代码均不强依赖监控端存在（即只起原本的 `docker-compose.yml` 也不应当崩溃）
+- [ ] 输出一份基础性能基线报告（开发/测试环境），包含模型推理与长期记忆检索的 P95/P99 指标
 
 ---
 

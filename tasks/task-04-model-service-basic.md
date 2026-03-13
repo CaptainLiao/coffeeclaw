@@ -1,7 +1,7 @@
 # Task 04 — 模型服务层基础版（LiteLLM 接入）
 
 **所属阶段**：Phase 1（第 1-2 个月）  
-**交付标准**：Agent 可通过统一接口调用 OpenAI / Anthropic 模型，单次推理 P99 延迟 < 2s，主模型不可用时自动降级
+**交付标准**：Agent 可通过统一接口调用 OpenAI / Anthropic 模型并替换 Task 02 的 mock 思考链路；主模型不可用时自动降级
 
 ---
 
@@ -100,12 +100,13 @@
 - [ ] 主模型模拟 503 错误时，自动切换到 Fallback 模型，整体调用不失败
 - [ ] 包含身份证号的消息在输入过滤后被脱敏（替换为 `[REDACTED]`）
 - [ ] 每次推理的 `token_usage` 正确写入数据库
+- [ ] Runtime `think` 节点从 mock 适配器切换为 `ModelService` 后，Task 02 主流程回归测试通过
 
 ---
 
 ## 依赖关系
-- **前置**：Task 01（项目初始化）、Task 03（State Store，用于写入 token_usage）
-- **后置**：Task 02（Runtime think 节点使用本服务）、Task 09（三策略路由扩展）
+- **前置**：Task 01（项目初始化）、Task 02（Runtime 主干已落地）、Task 03（State Store，用于写入 token_usage）
+- **后置**：Task 09（三策略路由扩展）
 
 ---
 

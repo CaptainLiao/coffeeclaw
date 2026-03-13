@@ -17,7 +17,8 @@ Phase 1 中的模型服务（Task 04）仅支持基础的 Fallback 容错逻辑�
 - [ ] 维护内存字典（或短连 Redis）缓存各个模型 Provider 的健康状态：
   - 最近 1 分钟平均延迟
   - 错误率计数器（窗口大小为 5 分钟）
-- [ ] 后台异步微小探针 (Health Check) 任务：定时（每分钟）给主流模型发极短的探测 prompt，计算 `latency_ms`
+- [ ] 后台异步微小探针 (Health Check) 任务：给主流模型发极短探测 prompt，计算 `latency_ms`
+- [ ] 探针周期、统计窗口、错误率阈值改为配置项，避免硬编码（例如 `model_probe_interval_seconds`、`model_health_window_seconds`）
 
 ### 2. 路由策略工厂（`src/model/router.py`）
 - [ ] 废弃 / 重构 Task 04 的 `BasicRouter`，改为 `SmartRouter` 类
@@ -34,9 +35,9 @@ Phase 1 中的模型服务（Task 04）仅支持基础的 Fallback 容错逻辑�
 
 ### 3. 熔断与限流机制（`src/model/router.py`）
 - [ ] `CircuitBreaker` 熔断器：
-  - 针对某个具体模型（如 gpt-4o），如果在 60 秒内连续 5 次 5xx 错误，或平均延迟 > 10s，触发 `OPEN` 状态
+  - 针对某个具体模型（如 gpt-4o），如果在配置窗口内连续多次 5xx 错误，或平均延迟超过配置阈值，触发 `OPEN` 状态
   - 处于 `OPEN` 状态的模型直接跳过尝试，快速失败路由给下一个顺位
-  - 每隔指定时间（如 5 分钟）转为 `HALF_OPEN`，放出少量流量试探。成功则 `CLOSED`
+  - 每隔配置时间转为 `HALF_OPEN`，放出少量流量试探。成功则 `CLOSED`
 - [ ] `RateLimiter`（基于 Redis + Lua 脚本 或 token bucket）：
   - 给模型设置并发度上限或分钟 QPS 上限，防止触发服务商的并发限制账单
 
