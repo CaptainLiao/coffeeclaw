@@ -1,0 +1,56 @@
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    container_name: coffeeclaw-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - POSTGRES_DSN=postgresql+asyncpg://coffeeclaw:coffeeclaw@postgres:5432/coffeeclaw
+      - REDIS_URL=redis://redis:6379/0
+      - APP_ENV=development
+      - LOG_LEVEL=INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    container_name: coffeeclaw-postgres
+    environment:
+      POSTGRES_USER: coffeeclaw
+      POSTGRES_PASSWORD: coffeeclaw
+      POSTGRES_DB: coffeeclaw
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coffeeclaw"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: coffeeclaw-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
