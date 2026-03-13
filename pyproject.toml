@@ -40,6 +40,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+cache-dir = ".cache/ruff"
 
 [tool.ruff.lint]
 select = [
@@ -56,6 +57,10 @@ ignore = []
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+cache_dir = ".cache/mypy"
+
+[tool.pytest.ini_options]
+cache_dir = ".cache/pytest"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

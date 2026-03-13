@@ -1,10 +1,5 @@
 .venv/
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-.tmp_mypy_cache/
-.uv-cache/
-__pycache__/
+.cache/
 *.py[cod]
 *.egg-info/
 .env

@@ -65,8 +65,16 @@ uv sync --extra dev
 
 ## 使用 Docker 启动
 
+首次启动或修改依赖/镜像配置后：
+
 ```powershell
 docker compose up -d --build
+```
+
+日常启动（不改依赖时）：
+
+```powershell
+docker compose up -d
 ```
 
 查看容器状态：
@@ -138,7 +146,7 @@ uv run uvicorn src.main:app --reload
 ```powershell
 uv run pytest tests -q
 uv run ruff check src tests
-uv run mypy src tests --cache-dir .tmp_mypy_cache
+uv run mypy src tests
 ```
 
 ## 当前范围
