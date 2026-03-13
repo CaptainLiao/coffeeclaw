@@ -1,12 +1,10 @@
-from types import SimpleNamespace
-
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
-from src import main
+from src.core import app as app_module
+from src.core.app import create_app
+from src.runtime.checkpoint import RuntimeCheckpointer
 from src.services import health as health_service
-
-client = TestClient(main.app)
 
 
 async def always_healthy(_: object) -> bool:
@@ -14,11 +12,30 @@ async def always_healthy(_: object) -> bool:
 
 
 def test_health_check(monkeypatch: MonkeyPatch) -> None:
+    fake_resources = type(
+        "Resources",
+        (),
+        {
+            "db_engine": object(),
+            "redis_client": object(),
+            "runtime_checkpointer": RuntimeCheckpointer(in_memory=True),
+            "startup_health": type("Health", (), {"db": True, "redis": True})(),
+        },
+    )()
+
+    async def fake_init_resources(_: object) -> object:
+        return fake_resources
+
+    async def fake_close_resources(_: object) -> None:
+        return None
+
     monkeypatch.setattr(health_service, "check_db_connection", always_healthy)
     monkeypatch.setattr(health_service, "check_redis_connection", always_healthy)
-    main.app.state.resources = SimpleNamespace(db_engine=object(), redis_client=object())
+    monkeypatch.setattr(app_module, "init_resources", fake_init_resources)
+    monkeypatch.setattr(app_module, "close_resources", fake_close_resources)
 
-    response = client.get("/health")
+    with TestClient(create_app()) as client:
+        response = client.get("/health")
 
     assert response.status_code == 200
     data = response.json()

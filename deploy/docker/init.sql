@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id UUID PRIMARY KEY,
     agent_id UUID REFERENCES agents(id),
     goal TEXT,
+    thread_id VARCHAR(255),
     status VARCHAR(20),
     dag JSONB,              -- Task DAG structure
     current_step INT,

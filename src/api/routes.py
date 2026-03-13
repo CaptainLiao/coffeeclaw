@@ -1,5 +1,93 @@
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from src.api.dependencies import get_agent_manager
+from src.api.schemas import (
+    AgentResumeRequest,
+    AgentRunRequest,
+    AgentRunResponse,
+    AgentStatusResponse,
+    AgentSummaryResponse,
+    CreateAgentRequest,
+)
+from src.runtime.lifecycle import AgentManager
 
 api_router = APIRouter()
 
-# Example: api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
+
+@api_router.post("/agents", response_model=AgentSummaryResponse, tags=["agents"])
+async def create_agent(
+    request: CreateAgentRequest,
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> AgentSummaryResponse:
+    if request.agent_config_path is None and request.inline_config is None:
+        raise HTTPException(
+            status_code=400,
+            detail="agent_config_path or inline_config is required",
+        )
+    try:
+        result = await manager.create_agent(
+            config_path=request.agent_config_path,
+            inline_config=request.inline_config,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return AgentSummaryResponse(**result)
+
+
+@api_router.post("/agents/{agent_id}/run", response_model=AgentRunResponse, tags=["agents"])
+async def run_agent(
+    agent_id: str,
+    request: AgentRunRequest,
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> AgentRunResponse:
+    try:
+        result = await manager.run_agent(
+            agent_id,
+            goal=request.goal,
+            thread_id=request.thread_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return AgentRunResponse(**result)
+
+
+@api_router.get("/agents/{agent_id}/status", response_model=AgentStatusResponse, tags=["agents"])
+async def get_agent_status(
+    agent_id: str,
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> AgentStatusResponse:
+    try:
+        result = await manager.get_agent_status(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return AgentStatusResponse(**result)
+
+
+@api_router.post("/agents/{agent_id}/pause", response_model=AgentSummaryResponse, tags=["agents"])
+async def pause_agent(
+    agent_id: str,
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> AgentSummaryResponse:
+    try:
+        result = await manager.pause_agent(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return AgentSummaryResponse(**result)
+
+
+@api_router.post("/agents/{agent_id}/resume", response_model=AgentRunResponse, tags=["agents"])
+async def resume_agent(
+    agent_id: str,
+    request: AgentResumeRequest,
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> AgentRunResponse:
+    try:
+        result = await manager.resume_agent(
+            agent_id,
+            thread_id=request.thread_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return AgentRunResponse(**result)
