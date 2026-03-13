@@ -249,13 +249,13 @@ def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
         agent_id = response.json()["agent_id"]
 
         run_response = client.post(
-            f"/api/v1/agents/{agent_id}/run",
+            f"/api/v1/agents/run?agent_id={agent_id}",
             json={"goal": "API runtime test", "thread_id": "thread-api"},
         )
         assert run_response.status_code == 200
         assert run_response.json()["status"] == "completed"
 
-        status_response = client.get(f"/api/v1/agents/{agent_id}/status")
+        status_response = client.get(f"/api/v1/agents/status?agent_id={agent_id}")
         assert status_response.status_code == 200
         assert status_response.json()["latest_task"]["thread_id"] == "thread-api"
 

@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.dependencies import get_agent_manager
 from src.api.schemas import (
@@ -37,9 +37,9 @@ async def create_agent(
     return AgentSummaryResponse(**result)
 
 
-@api_router.post("/agents/{agent_id}/run", response_model=AgentRunResponse, tags=["agents"])
+@api_router.post("/agents/run", response_model=AgentRunResponse, tags=["agents"])
 async def run_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Query(description="Agent ID")],
     request: AgentRunRequest,
     manager: Annotated[AgentManager, Depends(get_agent_manager)],
 ) -> AgentRunResponse:
@@ -54,9 +54,9 @@ async def run_agent(
     return AgentRunResponse(**result)
 
 
-@api_router.get("/agents/{agent_id}/status", response_model=AgentStatusResponse, tags=["agents"])
+@api_router.get("/agents/status", response_model=AgentStatusResponse, tags=["agents"])
 async def get_agent_status(
-    agent_id: str,
+    agent_id: Annotated[str, Query(description="Agent ID")],
     manager: Annotated[AgentManager, Depends(get_agent_manager)],
 ) -> AgentStatusResponse:
     try:
@@ -66,9 +66,9 @@ async def get_agent_status(
     return AgentStatusResponse(**result)
 
 
-@api_router.post("/agents/{agent_id}/pause", response_model=AgentSummaryResponse, tags=["agents"])
+@api_router.post("/agents/pause", response_model=AgentSummaryResponse, tags=["agents"])
 async def pause_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Query(description="Agent ID")],
     manager: Annotated[AgentManager, Depends(get_agent_manager)],
 ) -> AgentSummaryResponse:
     try:
@@ -78,9 +78,9 @@ async def pause_agent(
     return AgentSummaryResponse(**result)
 
 
-@api_router.post("/agents/{agent_id}/resume", response_model=AgentRunResponse, tags=["agents"])
+@api_router.post("/agents/resume", response_model=AgentRunResponse, tags=["agents"])
 async def resume_agent(
-    agent_id: str,
+    agent_id: Annotated[str, Query(description="Agent ID")],
     request: AgentResumeRequest,
     manager: Annotated[AgentManager, Depends(get_agent_manager)],
 ) -> AgentRunResponse:

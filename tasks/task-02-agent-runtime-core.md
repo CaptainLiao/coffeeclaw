@@ -105,10 +105,10 @@ Agent Runtime 是 CoffeeClaw 的核心，基于 **LangGraph** 实现 `感知(sen
 
 ### 7. API 接口（`src/api/routes.py` 扩展）
 - [x] `POST /agents` — 创建 Agent（接收 `agent_config_path` 或内联配置 JSON）
-- [x] `POST /agents/{agent_id}/run` — 启动 Agent 执行任务（`{"goal": "...", "thread_id": "..."}`）
-- [x] `GET /agents/{agent_id}/status` — 查询 Agent 状态
-- [x] `POST /agents/{agent_id}/pause` — 暂停 Agent
-- [x] `POST /agents/{agent_id}/resume` — 恢复 Agent（传入 `thread_id`）
+- [x] `POST /agents/run?agent_id=...` — 启动 Agent 执行任务（`{"goal": "...", "thread_id": "..."}`）
+- [x] `GET /agents/status?agent_id=...` — 查询 Agent 状态
+- [x] `POST /agents/pause?agent_id=...` — 暂停 Agent
+- [x] `POST /agents/resume?agent_id=...` — 恢复 Agent（传入 `thread_id`）
 
 ### 8. 示例 Agent 配置（`configs/agents/`）
 - [x] 创建 `configs/agents/demo-agent.md`，参考 PRD 2.1.3 节示例格式，用于验收测试
@@ -117,7 +117,7 @@ Agent Runtime 是 CoffeeClaw 的核心，基于 **LangGraph** 实现 `感知(sen
 
 ## 验收标准
 - [x] 加载 `configs/agents/demo-agent.md`，成功解析配置
-- [x] `POST /agents/{agent_id}/run` 触发 Agent 执行，能完成 ≥ 3 步工具调用（使用 Mock 工具）
+- [x] `POST /agents/run?agent_id=...` 触发 Agent 执行，能完成 ≥ 3 步工具调用（使用 Mock 工具）
 - [x] 中断后通过相同 `thread_id` 恢复，执行上下文完整保留
 - [x] `step_count` 达到 `max_steps` 时，Agent 自动终止，状态置为 `failed`
 - [x] 所有工具调用记录写入 `tool_logs` 表
