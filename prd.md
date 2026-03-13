@@ -686,11 +686,23 @@ CREATE TABLE tool_logs (
 
 ## 五、 项目结构
 
+> **说明（按当前仓库落地情况修订）**：v1 当前代码库已经采用“薄 `core` + `api` + 业务域目录”的实际结构。`core` 负责应用装配与配置，`infrastructure` 负责外部资源初始化，`services` 目前仅承载基础健康检查编排。随着后续任务推进，Redis/Postgres 的具体能力会逐步沉入 `memory/`、`runtime/`、`model/` 等业务模块，而不是无限扩张通用层。
+
 ```text
 coffeeclaw/
 ├── src/                            # 源代码
 │   ├── __init__.py
 │   ├── main.py                     # FastAPI 应用入口
+│   ├── core/                       # 应用装配与基础配置
+│   │   ├── __init__.py
+│   │   ├── app.py                  # FastAPI app factory / lifespan / middleware
+│   │   └── config.py               # Settings 定义与配置加载
+│   ├── infrastructure/             # 外部资源初始化（当前仅基础资源）
+│   │   ├── __init__.py
+│   │   └── resources.py            # Postgres / Redis 资源初始化与关闭
+│   ├── services/                   # 轻量应用服务（当前仅健康检查）
+│   │   ├── __init__.py
+│   │   └── health.py               # 健康检查编排与探针
 │   ├── runtime/                    # Agent Runtime 核心（基于 LangGraph）
 │   │   ├── __init__.py
 │   │   ├── graph.py                # LangGraph StateGraph 定义（核心循环）
@@ -723,12 +735,15 @@ coffeeclaw/
 │   │   └── safety.py               # 输入输出安全过滤
 │   ├── observability/              # 可观测性
 │   │   ├── __init__.py
+│   │   ├── logging.py              # 结构化日志初始化
 │   │   ├── tracing.py              # OpenTelemetry 追踪
 │   │   ├── metrics.py              # Prometheus 指标
 │   │   └── audit.py                # 审计日志
 │   └── api/                        # API 层
 │       ├── __init__.py
 │       ├── routes.py               # FastAPI 路由定义
+│       ├── system.py               # 系统路由（如 /health）
+│       ├── dependencies.py         # FastAPI 依赖注入
 │       └── schemas.py              # Pydantic 数据模型
 │
 ├── configs/                    # 配置文件
@@ -761,6 +776,11 @@ coffeeclaw/
 - [ ] 模型服务层基础版（LiteLLM 接入，支持 OpenAI/Anthropic）
 - [ ] 基础工具与 Skill 系统（解析社区标准的 `SKILL.md`，支持动态装载 prompt 与工具）
 - [ ] 本地开发环境 (Docker Compose)
+
+**当前实现备注**：
+- Task 01 已先落地应用装配、健康检查、容器化开发环境、CI 与基础日志能力。
+- `core / infrastructure / services` 当前仅作为薄共享层使用，用于支撑 FastAPI 启动、资源连接与系统级健康检查。
+- 后续进入 Task 02+ 时，业务能力应优先沉入 `runtime / memory / model / tools / orchestrator / workflow`，避免把平台核心逻辑堆入通用目录。
 
 **交付标准**：单个 Agent 可执行多步工具调用完成任务。
 

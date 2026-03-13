@@ -9,6 +9,8 @@
 
 CoffeeClaw 是企业级 AI Agent 开发平台，v1 采用 Python + FastAPI + LangGraph 作为核心技术栈。本任务完成所有基础脚手架搭建，为后续模块开发提供标准化环境。
 
+> 当前仓库在 PRD 业务目录之外，额外采用了薄 `src/core/`、`src/infrastructure/`、`src/services/` 作为共享支撑层：`core` 负责应用装配与配置，`infrastructure` 负责外部资源初始化，`services` 当前仅承载系统级健康检查编排。
+
 ---
 
 ## 任务列表

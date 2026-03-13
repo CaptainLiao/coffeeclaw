@@ -15,3 +15,9 @@ class ErrorResponse(BaseModel):
     code: str
     message: str
     details: Any | None = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    db: bool
+    redis: bool

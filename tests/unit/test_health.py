@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
 from src import main
+from src.services import health as health_service
 
 client = TestClient(main.app)
 
@@ -11,8 +14,9 @@ async def always_healthy(_: object) -> bool:
 
 
 def test_health_check(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setattr(main, "check_db_connection", always_healthy)
-    monkeypatch.setattr(main, "check_redis_connection", always_healthy)
+    monkeypatch.setattr(health_service, "check_db_connection", always_healthy)
+    monkeypatch.setattr(health_service, "check_redis_connection", always_healthy)
+    main.app.state.resources = SimpleNamespace(db_engine=object(), redis_client=object())
 
     response = client.get("/health")
 
