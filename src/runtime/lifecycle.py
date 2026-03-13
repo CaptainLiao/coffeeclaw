@@ -296,6 +296,49 @@ class AgentManager:
             },
         }
 
+    async def get_task_trace(self, task_id: str) -> dict[str, Any]:
+        trace = await self._repository.get_task_trace(task_id)
+        if trace is None:
+            raise ValueError(f"Task {task_id} not found.")
+
+        return {
+            "task": {
+                "task_id": trace.task.id,
+                "agent_id": trace.task.agent_id,
+                "goal": trace.task.goal,
+                "thread_id": trace.task.thread_id,
+                "status": trace.task.status,
+                "current_step": trace.task.current_step,
+                "created_at": trace.task.created_at,
+                "completed_at": trace.task.completed_at,
+            },
+            "steps": [
+                {
+                    "step_id": item.step.id,
+                    "step_index": item.step.step_index,
+                    "action_type": item.step.action_type,
+                    "plan": item.step.plan,
+                    "result": item.step.result,
+                    "model_used": item.step.model_used,
+                    "created_at": item.step.created_at,
+                    "tool_logs": [
+                        {
+                            "tool_log_id": log.id,
+                            "tool_name": log.tool_name,
+                            "input_params": log.input_params,
+                            "output_result": log.output_result,
+                            "latency_ms": log.latency_ms,
+                            "success": log.success,
+                            "error_message": log.error_message,
+                            "created_at": log.created_at,
+                        }
+                        for log in item.tool_logs
+                    ],
+                }
+                for item in trace.steps
+            ],
+        }
+
     async def _run_loop(
         self,
         *,

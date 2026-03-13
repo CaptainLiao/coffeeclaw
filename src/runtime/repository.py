@@ -66,6 +66,18 @@ class ToolLogRecord:
     created_at: datetime
 
 
+@dataclass
+class TaskTraceStep:
+    step: TaskStepRecord
+    tool_logs: list[ToolLogRecord]
+
+
+@dataclass
+class TaskTraceRecord:
+    task: TaskRecord
+    steps: list[TaskTraceStep]
+
+
 class RuntimeRepository:
     async def ensure_schema(self) -> None:
         raise NotImplementedError
@@ -142,6 +154,9 @@ class RuntimeRepository:
     async def list_tool_logs(self, task_id: str) -> list[ToolLogRecord]:
         raise NotImplementedError
 
+    async def get_task_trace(self, task_id: str) -> TaskTraceRecord | None:
+        raise NotImplementedError
+
 
 class SqlRuntimeRepository(RuntimeRepository):
     def __init__(self, engine: AsyncEngine) -> None:
@@ -203,6 +218,14 @@ class SqlRuntimeRepository(RuntimeRepository):
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             )
             """,
+            "CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)",
+            "CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)",
+            "CREATE INDEX IF NOT EXISTS idx_task_steps_task_step ON task_steps(task_id, step_index)",
+            "CREATE INDEX IF NOT EXISTS idx_tool_logs_task_step_id ON tool_logs(task_step_id)",
+            "CREATE INDEX IF NOT EXISTS idx_tool_logs_tool_name ON tool_logs(tool_name)",
+            "CREATE INDEX IF NOT EXISTS idx_tool_logs_success ON tool_logs(success)",
         ]
         async with self._engine.begin() as connection:
             for statement in statements:
@@ -581,6 +604,73 @@ class SqlRuntimeRepository(RuntimeRepository):
             for row in rows
         ]
 
+    async def get_task_trace(self, task_id: str) -> TaskTraceRecord | None:
+        task = await self.get_task(task_id)
+        if task is None:
+            return None
+
+        async with self._engine.connect() as connection:
+            step_result = await connection.execute(
+                text(
+                    """
+                    SELECT id, task_id, step_index, action_type, plan, result, model_used, created_at
+                    FROM task_steps
+                    WHERE task_id = :task_id
+                    ORDER BY step_index ASC, created_at ASC
+                    """
+                ),
+                {"task_id": task_id},
+            )
+            step_rows = step_result.mappings().all()
+
+            log_result = await connection.execute(
+                text(
+                    """
+                    SELECT tl.id, tl.task_step_id, tl.tool_name, tl.input_params, tl.output_result,
+                           tl.latency_ms, tl.success, tl.error_message, tl.created_at
+                    FROM tool_logs tl
+                    INNER JOIN task_steps ts ON ts.id = tl.task_step_id
+                    WHERE ts.task_id = :task_id
+                    ORDER BY ts.step_index ASC, tl.created_at ASC
+                    """
+                ),
+                {"task_id": task_id},
+            )
+            log_rows = log_result.mappings().all()
+
+        logs_by_step: dict[str, list[ToolLogRecord]] = defaultdict(list)
+        for row in log_rows:
+            step_id = str(row["task_step_id"])
+            logs_by_step[step_id].append(
+                ToolLogRecord(
+                    id=str(row["id"]),
+                    task_step_id=step_id,
+                    tool_name=str(row["tool_name"]),
+                    input_params=dict(row["input_params"]),
+                    output_result=dict(row["output_result"]),
+                    latency_ms=int(row["latency_ms"]),
+                    success=bool(row["success"]),
+                    error_message=row["error_message"],
+                    created_at=row["created_at"],
+                )
+            )
+
+        steps: list[TaskTraceStep] = []
+        for row in step_rows:
+            step = TaskStepRecord(
+                id=str(row["id"]),
+                task_id=str(row["task_id"]),
+                step_index=int(row["step_index"]),
+                action_type=str(row["action_type"]),
+                plan=dict(row["plan"]),
+                result=dict(row["result"]),
+                model_used=str(row["model_used"]),
+                created_at=row["created_at"],
+            )
+            steps.append(TaskTraceStep(step=step, tool_logs=logs_by_step.get(step.id, [])))
+
+        return TaskTraceRecord(task=task, steps=steps)
+
 
 class InMemoryRuntimeRepository(RuntimeRepository):
     def __init__(self) -> None:
@@ -707,3 +797,22 @@ class InMemoryRuntimeRepository(RuntimeRepository):
 
     async def list_tool_logs(self, task_id: str) -> list[ToolLogRecord]:
         return list(self.tool_logs.get(task_id, []))
+
+    async def get_task_trace(self, task_id: str) -> TaskTraceRecord | None:
+        task = self.tasks.get(task_id)
+        if task is None:
+            return None
+
+        steps = sorted(
+            self.task_steps.get(task_id, []),
+            key=lambda item: (item.step_index, item.created_at),
+        )
+        trace_steps: list[TaskTraceStep] = []
+        for step in steps:
+            logs = [
+                log
+                for log in self.tool_logs.get(task_id, [])
+                if log.task_step_id == step.id
+            ]
+            trace_steps.append(TaskTraceStep(step=step, tool_logs=logs))
+        return TaskTraceRecord(task=task, steps=trace_steps)

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
@@ -75,3 +76,41 @@ class AgentStatusResponse(BaseModel):
     status: str
     latest_task: AgentTaskSummaryResponse | None = None
     latest_step: AgentStepSummaryResponse | None = None
+
+
+class TaskTraceToolLogResponse(BaseModel):
+    tool_log_id: str
+    tool_name: str
+    input_params: dict[str, Any]
+    output_result: dict[str, Any]
+    latency_ms: int
+    success: bool
+    error_message: str | None = None
+    created_at: datetime
+
+
+class TaskTraceStepResponse(BaseModel):
+    step_id: str
+    step_index: int
+    action_type: str
+    plan: dict[str, Any]
+    result: dict[str, Any]
+    model_used: str
+    created_at: datetime
+    tool_logs: list[TaskTraceToolLogResponse]
+
+
+class TaskTraceTaskResponse(BaseModel):
+    task_id: str
+    agent_id: str
+    goal: str
+    thread_id: str
+    status: str
+    current_step: int
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class TaskTraceResponse(BaseModel):
+    task: TaskTraceTaskResponse
+    steps: list[TaskTraceStepResponse]

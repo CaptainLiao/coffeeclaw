@@ -48,3 +48,12 @@ CREATE TABLE IF NOT EXISTS tool_logs (
     error_message TEXT,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_task_steps_task_step ON task_steps(task_id, step_index);
+CREATE INDEX IF NOT EXISTS idx_tool_logs_task_step_id ON tool_logs(task_step_id);
+CREATE INDEX IF NOT EXISTS idx_tool_logs_tool_name ON tool_logs(tool_name);
+CREATE INDEX IF NOT EXISTS idx_tool_logs_success ON tool_logs(success);

@@ -9,11 +9,15 @@ from typing import Any, Protocol, TypedDict, cast
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    HumanMessage,
+    SystemMessage,
     ToolMessage,
     messages_from_dict,
     messages_to_dict,
 )
 from redis.asyncio.client import Redis
+
+from src.memory.shortterm import ShortTermMemory
 
 
 class ToolCall(TypedDict):
@@ -69,22 +73,34 @@ class ToolExecutor(Protocol):
 
 class RedisShortTermMemoryAdapter:
     def __init__(self, redis_client: Redis) -> None:
-        self._redis = redis_client
-
-    def _messages_key(self, thread_id: str) -> str:
-        return f"runtime:thread:{thread_id}:messages"
+        self._shortterm = ShortTermMemory(redis_client)
 
     async def load_context(self, thread_id: str) -> list[BaseMessage]:
-        raw_messages = await self._redis.get(self._messages_key(thread_id))
-        if raw_messages is None:
-            return []
-
-        payload = cast(list[dict[str, Any]], json.loads(raw_messages))
-        return list(messages_from_dict(payload))
+        raw_messages = await self._shortterm.get_messages(thread_id, limit=50)
+        messages: list[BaseMessage] = []
+        for item in raw_messages:
+            role = str(item.get("type", "human"))
+            content = str(item.get("content", ""))
+            if role == "ai":
+                messages.append(AIMessage(content=content))
+            elif role == "system":
+                messages.append(SystemMessage(content=content))
+            else:
+                messages.append(HumanMessage(content=content))
+        return messages
 
     async def append_messages(self, thread_id: str, messages: list[BaseMessage]) -> None:
-        serialized = json.dumps(messages_to_dict(messages))
-        await self._redis.set(self._messages_key(thread_id), serialized, ex=3600)
+        await self._shortterm.clear_session(thread_id)
+        for message in messages:
+            role = "human"
+            if isinstance(message, AIMessage):
+                role = "ai"
+            elif isinstance(message, SystemMessage):
+                role = "system"
+            await self._shortterm.append_message(
+                thread_id,
+                {"type": role, "content": str(message.content)},
+            )
 
 
 class InMemoryShortTermMemoryAdapter:

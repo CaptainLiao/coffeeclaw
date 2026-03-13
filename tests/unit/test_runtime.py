@@ -201,6 +201,25 @@ async def test_pause_agent_raises_for_missing_agent() -> None:
         await manager.pause_agent("missing-agent")
 
 
+@pytest.mark.asyncio
+async def test_repository_returns_task_trace_with_steps_and_logs() -> None:
+    repository = InMemoryRuntimeRepository()
+    manager = AgentManager.for_tests(repository=repository)
+    created = await manager.create_agent(config_path=str(CONFIG_PATH))
+
+    run_result = await manager.run_agent(
+        created["agent_id"],
+        goal="trace check",
+        thread_id="thread-trace",
+    )
+    trace = await repository.get_task_trace(run_result["task_id"])
+
+    assert trace is not None
+    assert trace.task.id == run_result["task_id"]
+    assert len(trace.steps) >= 1
+    assert sum(len(step.tool_logs) for step in trace.steps) == 3
+
+
 def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
     app = create_app()
     manager = AgentManager.for_tests(repository=InMemoryRuntimeRepository())
@@ -239,6 +258,16 @@ def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
         status_response = client.get(f"/api/v1/agents/{agent_id}/status")
         assert status_response.status_code == 200
         assert status_response.json()["latest_task"]["thread_id"] == "thread-api"
+
+        task_id = run_response.json()["task_id"]
+        trace_response = client.get(f"/api/v1/tasks/{task_id}/trace")
+        assert trace_response.status_code == 200
+        trace_payload = trace_response.json()
+        assert trace_payload["task"]["task_id"] == task_id
+        assert len(trace_payload["steps"]) >= 1
+
+        missing_trace = client.get("/api/v1/tasks/missing-task/trace")
+        assert missing_trace.status_code == 404
 
 
 def test_health_check_with_runtime_resources(monkeypatch: MonkeyPatch) -> None:

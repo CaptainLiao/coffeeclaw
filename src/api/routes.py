@@ -10,6 +10,7 @@ from src.api.schemas import (
     AgentStatusResponse,
     AgentSummaryResponse,
     CreateAgentRequest,
+    TaskTraceResponse,
 )
 from src.runtime.lifecycle import AgentManager
 
@@ -91,3 +92,15 @@ async def resume_agent(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return AgentRunResponse(**result)
+
+
+@api_router.get("/tasks/{task_id}/trace", response_model=TaskTraceResponse, tags=["tasks"])
+async def get_task_trace(
+    task_id: str,
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> TaskTraceResponse:
+    try:
+        result = await manager.get_task_trace(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return TaskTraceResponse(**result)
