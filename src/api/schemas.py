@@ -1,21 +1,20 @@
 from datetime import datetime
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 DataT = TypeVar("DataT")
 
 
 class SuccessResponse(BaseModel, Generic[DataT]):
-    status: str = "success"
+    code: int = 1
     data: DataT
 
 
 class ErrorResponse(BaseModel):
-    status: str = "error"
-    code: str
+    code: int = 0
     message: str
-    details: Any | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):

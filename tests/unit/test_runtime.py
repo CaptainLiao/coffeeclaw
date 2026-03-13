@@ -246,28 +246,38 @@ def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
             json={"agent_config_path": str(CONFIG_PATH)},
         )
         assert response.status_code == 200
-        agent_id = response.json()["agent_id"]
+        create_payload = response.json()
+        assert create_payload["code"] == 1
+        agent_id = create_payload["data"]["agent_id"]
 
         run_response = client.post(
             f"/api/v1/agents/run?agent_id={agent_id}",
             json={"goal": "API runtime test", "thread_id": "thread-api"},
         )
         assert run_response.status_code == 200
-        assert run_response.json()["status"] == "completed"
+        run_payload = run_response.json()
+        assert run_payload["code"] == 1
+        assert run_payload["data"]["status"] == "completed"
 
         status_response = client.get(f"/api/v1/agents/status?agent_id={agent_id}")
         assert status_response.status_code == 200
-        assert status_response.json()["latest_task"]["thread_id"] == "thread-api"
+        status_payload = status_response.json()
+        assert status_payload["code"] == 1
+        assert status_payload["data"]["latest_task"]["thread_id"] == "thread-api"
 
-        task_id = run_response.json()["task_id"]
+        task_id = run_payload["data"]["task_id"]
         trace_response = client.get(f"/api/v1/tasks/{task_id}/trace")
         assert trace_response.status_code == 200
         trace_payload = trace_response.json()
-        assert trace_payload["task"]["task_id"] == task_id
-        assert len(trace_payload["steps"]) >= 1
+        assert trace_payload["code"] == 1
+        assert trace_payload["data"]["task"]["task_id"] == task_id
+        assert len(trace_payload["data"]["steps"]) >= 1
 
         missing_trace = client.get("/api/v1/tasks/missing-task/trace")
         assert missing_trace.status_code == 404
+        missing_payload = missing_trace.json()
+        assert missing_payload["code"] == 0
+        assert "not found" in missing_payload["message"].lower()
 
 
 def test_health_check_with_runtime_resources(monkeypatch: MonkeyPatch) -> None:

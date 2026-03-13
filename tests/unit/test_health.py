@@ -38,7 +38,9 @@ def test_health_check(monkeypatch: MonkeyPatch) -> None:
         response = client.get("/health")
 
     assert response.status_code == 200
-    data = response.json()
+    payload = response.json()
+    assert payload["code"] == 1
+    data = payload["data"]
     assert data["status"] == "ok"
     assert data["db"] is True
     assert data["redis"] is True
