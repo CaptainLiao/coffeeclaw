@@ -1,0 +1,14 @@
+.git
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.tmp_mypy_cache
+.venv
+__pycache__
+*.pyc
+.env
+docs
+tasks
+tests
+README.md
