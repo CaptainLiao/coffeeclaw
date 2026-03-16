@@ -165,12 +165,8 @@ uv run uvicorn src.main:app --reload
 ## 质量检查
 
 运行测试和静态检查：
-
-```powershell
-uv run pytest tests -q
-uv run ruff check src tests
-uv run mypy src tests
-```
+- `python .\scripts\test.py`：只跑 `pytest`
+- `python .\scripts\check.py`：依次跑 `ruff + mypy + pytest`
 
 ## 当前范围
 
