@@ -50,6 +50,7 @@ class TaskStepRecord:
     plan: dict[str, Any]
     result: dict[str, Any]
     model_used: str
+    token_usage: dict[str, Any]
     created_at: datetime
 
 
@@ -132,6 +133,7 @@ class RuntimeRepository:
         plan: dict[str, Any],
         result: dict[str, Any],
         model_used: str,
+        token_usage: dict[str, Any] | None = None,
     ) -> TaskStepRecord:
         raise NotImplementedError
 
@@ -472,6 +474,7 @@ class SqlRuntimeRepository(RuntimeRepository):
         plan: dict[str, Any],
         result: dict[str, Any],
         model_used: str,
+        token_usage: dict[str, Any] | None = None,
     ) -> TaskStepRecord:
         step_id = str(uuid.uuid4())
         now = utcnow()
@@ -496,18 +499,28 @@ class SqlRuntimeRepository(RuntimeRepository):
                     "plan": json.dumps(plan),
                     "result": json.dumps(result),
                     "model_used": model_used,
-                    "token_usage": json.dumps({}),
+                    "token_usage": json.dumps(token_usage or {}),
                     "created_at": now,
                 },
             )
-        return TaskStepRecord(step_id, task_id, step_index, action_type, plan, result, model_used, now)
+        return TaskStepRecord(
+            step_id,
+            task_id,
+            step_index,
+            action_type,
+            plan,
+            result,
+            model_used,
+            token_usage or {},
+            now,
+        )
 
     async def get_latest_task_step(self, task_id: str) -> TaskStepRecord | None:
         async with self._engine.connect() as connection:
             result = await connection.execute(
                 text(
                     """
-                    SELECT id, task_id, step_index, action_type, plan, result, model_used, created_at
+                    SELECT id, task_id, step_index, action_type, plan, result, model_used, token_usage, created_at
                     FROM task_steps
                     WHERE task_id = :task_id
                     ORDER BY step_index DESC, created_at DESC
@@ -527,6 +540,7 @@ class SqlRuntimeRepository(RuntimeRepository):
             plan=dict(row["plan"]),
             result=dict(row["result"]),
             model_used=str(row["model_used"]),
+            token_usage=dict(row["token_usage"] or {}),
             created_at=row["created_at"],
         )
 
@@ -613,7 +627,7 @@ class SqlRuntimeRepository(RuntimeRepository):
             step_result = await connection.execute(
                 text(
                     """
-                    SELECT id, task_id, step_index, action_type, plan, result, model_used, created_at
+                    SELECT id, task_id, step_index, action_type, plan, result, model_used, token_usage, created_at
                     FROM task_steps
                     WHERE task_id = :task_id
                     ORDER BY step_index ASC, created_at ASC
@@ -665,6 +679,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 plan=dict(row["plan"]),
                 result=dict(row["result"]),
                 model_used=str(row["model_used"]),
+                token_usage=dict(row["token_usage"] or {}),
                 created_at=row["created_at"],
             )
             steps.append(TaskTraceStep(step=step, tool_logs=logs_by_step.get(step.id, [])))
@@ -756,8 +771,19 @@ class InMemoryRuntimeRepository(RuntimeRepository):
         plan: dict[str, Any],
         result: dict[str, Any],
         model_used: str,
+        token_usage: dict[str, Any] | None = None,
     ) -> TaskStepRecord:
-        step = TaskStepRecord(str(uuid.uuid4()), task_id, step_index, action_type, plan, result, model_used, utcnow())
+        step = TaskStepRecord(
+            str(uuid.uuid4()),
+            task_id,
+            step_index,
+            action_type,
+            plan,
+            result,
+            model_used,
+            token_usage or {},
+            utcnow(),
+        )
         self.task_steps[task_id].append(step)
         return step
 

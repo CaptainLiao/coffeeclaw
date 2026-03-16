@@ -7,8 +7,10 @@ from pytest import MonkeyPatch
 
 from src.core import app as app_module
 from src.core.app import create_app
+from src.runtime.adapters import MockModelAdapter
 from src.runtime.checkpoint import RuntimeCheckpointer
 from src.runtime.lifecycle import AgentConfigParser, AgentManager
+from src.runtime.nodes import RuntimeNodeServices
 from src.runtime.repository import InMemoryRuntimeRepository
 from src.services import health as health_service
 
@@ -247,6 +249,32 @@ async def test_repository_returns_task_trace_with_steps_and_logs() -> None:
     assert trace.task.id == run_result["task_id"]
     assert len(trace.steps) >= 1
     assert sum(len(step.tool_logs) for step in trace.steps) == 3
+    assert isinstance(trace.steps[0].step.token_usage, dict)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_fails_fast_when_model_key_missing() -> None:
+    repository = InMemoryRuntimeRepository()
+    manager = AgentManager.for_tests(repository=repository)
+    created = await manager.create_agent(config_path=str(CONFIG_PATH))
+
+    class KeylessModel(MockModelAdapter):
+        def has_any_key(self) -> bool:
+            return False
+
+    manager._services = RuntimeNodeServices(
+        memory=manager._services.memory,
+        model=KeylessModel(),
+        tools=manager._services.tools,
+        repository=repository,
+    )
+
+    with pytest.raises(ValueError, match="No model API key configured"):
+        await manager.run_agent(
+            created["agent_id"],
+            goal="will fail fast",
+            thread_id="thread-no-key",
+        )
 
 
 def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
@@ -307,6 +335,7 @@ def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
         assert trace_payload["code"] == 1
         assert trace_payload["data"]["task"]["task_id"] == task_id
         assert len(trace_payload["data"]["steps"]) >= 1
+        assert "token_usage" in trace_payload["data"]["steps"][0]
 
         missing_trace = client.get("/api/v1/tasks/missing-task/trace")
         assert missing_trace.status_code == 404

@@ -99,6 +99,7 @@ class TaskTraceStepResponse(BaseModel):
     plan: dict[str, Any]
     result: dict[str, Any]
     model_used: str
+    token_usage: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     tool_logs: list[TaskTraceToolLogResponse]
 

@@ -18,6 +18,7 @@ from langchain_core.messages import (
 from redis.asyncio.client import Redis
 
 from src.memory.shortterm import ShortTermMemory
+from src.model import ModelResponse, ModelService
 
 
 class ToolCall(TypedDict):
@@ -169,6 +170,117 @@ class MockModelAdapter:
         if status == "escalate":
             return f"Escalation requested after {step_count} steps."
         return f"Continuing after {step_count} steps."
+
+
+class LiteLLMModelAdapter:
+    def __init__(self, *, model_service: ModelService, default_model: str = "gpt-4o") -> None:
+        self._model_service = model_service
+        self._default_model = default_model
+
+    def has_any_key(self) -> bool:
+        return self._model_service.has_any_key()
+
+    async def decide_next_action(
+        self,
+        state: dict[str, Any],
+        available_tools: list[str],
+    ) -> ThinkResult:
+        llm_messages = self._to_litellm_messages(cast(list[BaseMessage], state["messages"]))
+        tool_defs = self._build_tool_defs(available_tools)
+
+        response = await self._model_service.think(
+            agent_config=cast(dict[str, Any], state["agent_config"]),
+            messages=llm_messages,
+            tools=tool_defs,
+            tool_results=cast(list[dict[str, Any]], state.get("tool_results", [])),
+        )
+        return self._to_think_result(response)
+
+    async def summarize_reflection(self, state: dict[str, Any]) -> str:
+        status = cast(str, state["status"])
+        step_count = int(state["step_count"])
+        if status == "completed":
+            return f"Completed after {step_count} steps."
+        if status == "failed":
+            return f"Failed after {step_count} steps."
+        if status == "escalate":
+            return f"Escalation requested after {step_count} steps."
+        return f"Continuing after {step_count} steps."
+
+    def _to_litellm_messages(self, messages: list[BaseMessage]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for message in messages:
+            if isinstance(message, HumanMessage):
+                result.append({"role": "user", "content": str(message.content)})
+                continue
+            if isinstance(message, SystemMessage):
+                result.append({"role": "system", "content": str(message.content)})
+                continue
+            if isinstance(message, ToolMessage):
+                result.append(
+                    {
+                        "role": "tool",
+                        "content": str(message.content),
+                        "tool_call_id": message.tool_call_id,
+                    }
+                )
+                continue
+
+            payload: dict[str, Any] = {"role": "assistant", "content": str(message.content)}
+            if isinstance(message, AIMessage) and message.tool_calls:
+                payload["tool_calls"] = [
+                    {
+                        "id": str(tool_call.get("id", "")),
+                        "type": "function",
+                        "function": {
+                            "name": str(tool_call.get("name", "")),
+                            "arguments": json.dumps(tool_call.get("args", {}), ensure_ascii=False),
+                        },
+                    }
+                    for tool_call in message.tool_calls
+                ]
+            result.append(payload)
+        return result
+
+    def _build_tool_defs(self, available_tools: list[str]) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": f"Execute tool {tool_name}",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": True,
+                    },
+                },
+            }
+            for tool_name in available_tools
+        ]
+
+    def _to_think_result(self, response: ModelResponse) -> ThinkResult:
+        tool_calls: list[ToolCall] = []
+        for item in response.tool_calls:
+            tool_calls.append(
+                ToolCall(
+                    id=item.id or str(uuid.uuid4()),
+                    name=item.name,
+                    arguments=item.arguments,
+                )
+            )
+
+        return ThinkResult(
+            tool_calls=tool_calls,
+            final_response=response.final_response,
+            plan={
+                **response.plan,
+                "warnings": response.warnings,
+                "model_cost_usd": response.model_cost_usd,
+                "token_usage": response.token_usage,
+            },
+            model_used=response.model_used or self._default_model,
+        )
 
 
 class MockToolExecutor:

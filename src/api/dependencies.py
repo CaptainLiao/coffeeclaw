@@ -6,11 +6,11 @@ from src.core.state import get_agent_manager_state, get_app_resources
 from src.runtime.lifecycle import AgentManager
 
 
-def get_db_engine(request: Request) -> AsyncEngine:
+def get_db_engine(request: Request) -> AsyncEngine | None:
     return get_app_resources(request.app).db_engine
 
 
-def get_redis_client(request: Request) -> Redis:
+def get_redis_client(request: Request) -> Redis | None:
     return get_app_resources(request.app).redis_client
 
 
@@ -21,8 +21,8 @@ def get_agent_manager(request: Request) -> AgentManager:
 
     resources = get_app_resources(request.app)
     manager = AgentManager.from_resources(
-        db_engine=resources.db_engine,
-        redis_client=resources.redis_client,
+        repository=resources.runtime_repository,
+        memory_adapter=resources.memory_adapter,
         checkpointer=resources.runtime_checkpointer,
     )
     request.app.state.agent_manager = manager

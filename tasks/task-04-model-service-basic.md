@@ -1,13 +1,13 @@
 # Task 04 — 模型服务层基础版（LiteLLM 接入）
 
 **所属阶段**：Phase 1（第 1-2 个月）  
-**交付标准**：Agent 可通过统一接口调用 OpenAI / Anthropic 模型并替换 Task 02 的 mock 思考链路；主模型不可用时自动降级
+**交付标准**：Agent 可通过 OpenAI 兼容接口调用模型并替换 Task 02 的 mock 思考链路；主模型不可用时自动降级
 
 ---
 
 ## 背景
 
-模型服务层使用 **LiteLLM** 作为多模型统一适配层，对 Agent Runtime 提供标准化推理接口。v1 直接使用云端 API（OpenAI/Anthropic），安全过滤在调用前后各设一道关卡。Phase 1 实现基础接入与安全过滤；Phase 2 Task 09 完成智能路由三策略。
+模型服务层使用 **LiteLLM** 作为多模型统一适配层，对 Agent Runtime 提供标准化推理接口。v1 使用 OpenAI 兼容 API（可对接 OpenAI/OneAPI/vLLM 等兼容网关），安全过滤在调用前后各设一道关卡。Phase 1 实现基础接入与安全过滤；Phase 2 Task 09 完成智能路由三策略。
 
 ---
 
@@ -18,7 +18,7 @@
   - `async_completion(messages, model, tools, **kwargs)` — 异步调用，返回标准 ChatCompletion 响应
   - `async_stream_completion(messages, model, tools, **kwargs)` — 流式调用，返回 AsyncGenerator
 - [ ] 通过 `pydantic-settings` 从环境变量加载各 Provider 的 API Key
-  - `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`（对照 `.env.example`）
+  - `MODEL_API_KEY`、`MODEL_API_BASE`（对照 `.env.example`）
 - [ ] 统一错误处理：将 LiteLLM 各 Provider 异常归一化为内部 `ModelError`（含 `provider`、`status_code`、`message` 字段）
 - [ ] 内置 **重试逻辑**（使用 `tenacity`）：遇到 rate limit（429）或服务器错误（5xx）时指数退避重试，最多 3 次
 
@@ -85,8 +85,8 @@
 - [ ] 新增 `ModelConfig` Pydantic 设置：
   ```python
   class ModelSettings(BaseSettings):
-      openai_api_key: str
-      anthropic_api_key: str = ""
+      model_api_key: str
+      model_api_base: str = ""
       default_primary_model: str = "gpt-4o"
       default_fallback_model: str = "gpt-4o-mini"
       model_timeout_seconds: int = 60

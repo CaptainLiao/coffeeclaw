@@ -31,18 +31,34 @@ CoffeeClaw 是一个基于 FastAPI、LangGraph、Postgres 和 Redis 的 Agent �
 
 ## 配置说明
 
-可参考 `.env.example` 新建 `.env`，按需修改配置。
+配置采用两层文件覆盖机制：
+
+1. `.env`（基础配置）
+2. `.env.local`（本机覆盖，最高优先级）
+
+生产环境建议通过外部环境变量注入，不依赖编辑文件。
 
 主要环境变量：
 
 - `POSTGRES_DSN`
 - `REDIS_URL`
+- `RUNTIME_REPOSITORY_BACKEND`（`postgres` 或 `memory`）
+- `SHORTTERM_MEMORY_BACKEND`（`redis` 或 `memory`）
+- `CHECKPOINT_BACKEND`（`postgres` 或 `memory`）
 - `APP_ENV`
 - `LOG_LEVEL`
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
+- `MODEL_API_KEY`（推荐，单一 OpenAI 兼容入口）
+- `MODEL_API_BASE`（可选，自建/第三方 OpenAI 兼容地址）
+- `MODEL_TIMEOUT_SECONDS`
+- `MAX_RETRIES`
 
 默认的 Docker Compose 启动方式下，Postgres 和 Redis 都运行在容器中，应用容器会自动连接它们。
+
+如需后续切换存储后端，可直接改环境变量：
+
+- `RUNTIME_REPOSITORY_BACKEND=postgres|memory`
+- `SHORTTERM_MEMORY_BACKEND=redis|memory`
+- `CHECKPOINT_BACKEND=postgres|memory`
 
 ## 依赖管理
 

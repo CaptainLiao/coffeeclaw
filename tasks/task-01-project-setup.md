@@ -85,9 +85,9 @@ CoffeeClaw 是企业级 AI Agent 开发平台，v1 采用 Python + FastAPI + Lan
   ```
 - [x] 创建 `.env.example`，列出所有必需的环境变量（不含真实值）：
   ```env
-  # LLM Providers
-  OPENAI_API_KEY=
-  ANTHROPIC_API_KEY=
+  # OpenAI-compatible Model Gateway
+  MODEL_API_KEY=
+  MODEL_API_BASE=
   
   # Database
   POSTGRES_DSN=postgresql+asyncpg://user:pass@localhost:5432/coffeeclaw

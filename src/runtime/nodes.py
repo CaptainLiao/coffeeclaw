@@ -62,6 +62,11 @@ def create_think_node(services: RuntimeNodeServices) -> NodeFn:
             cast(dict[str, Any], state["agent_config"])
         )
         decision = await services.model.decide_next_action(state, available_tools)
+        token_usage = {}
+        if isinstance(decision.plan, dict):
+            raw_usage = decision.plan.get("token_usage", {})
+            if isinstance(raw_usage, dict):
+                token_usage = raw_usage
         messages = cast(list[Any], state["messages"]) + [build_think_message(decision)]
         return {
             "messages": messages,
@@ -70,6 +75,7 @@ def create_think_node(services: RuntimeNodeServices) -> NodeFn:
             "last_plan": decision.plan,
             "last_action": "respond" if decision.final_response is not None else "tool_call",
             "model_used": decision.model_used,
+            "token_usage": token_usage,
         }
 
     return think_node
@@ -130,6 +136,7 @@ def create_reflect_node(services: RuntimeNodeServices) -> NodeFn:
                 "messages": messages_to_dict(cast(list[Any], state["messages"])[-4:]),
             },
             model_used=cast(str, state.get("model_used", "mock-runtime-model")),
+            token_usage=cast(dict[str, Any], state.get("token_usage", {})),
         )
 
         for tool_call, tool_result in zip(

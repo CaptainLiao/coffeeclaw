@@ -32,6 +32,7 @@ class AgentState(TypedDict):
     last_action: str
     last_plan: dict[str, Any]
     model_used: str
+    token_usage: dict[str, Any]
 
 
 def route_after_act(_: AgentState) -> str:

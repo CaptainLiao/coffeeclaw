@@ -9,15 +9,16 @@ from langchain_core.messages import HumanMessage, messages_to_dict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field
-from redis.asyncio.client import Redis
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.core.config import Settings, settings
+from src.model import ModelService
+from src.model.provider import ModelProvider
+from src.model.safety import InputFilter, OutputFilter
 from src.runtime.adapters import (
     InMemoryShortTermMemoryAdapter,
+    LiteLLMModelAdapter,
     MockModelAdapter,
     MockToolExecutor,
-    RedisShortTermMemoryAdapter,
     ShortTermMemoryAdapter,
 )
 from src.runtime.checkpoint import RuntimeCheckpointer
@@ -26,7 +27,6 @@ from src.runtime.nodes import RuntimeNodeServices
 from src.runtime.repository import (
     InMemoryRuntimeRepository,
     RuntimeRepository,
-    SqlRuntimeRepository,
 )
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
@@ -80,7 +80,8 @@ class AgentManager:
         *,
         repository: RuntimeRepository,
         checkpointer: RuntimeCheckpointer,
-        redis_client: Redis | None = None,
+        memory_adapter: ShortTermMemoryAdapter | None = None,
+        use_mock_model: bool = False,
         runtime_settings: Settings = settings,
     ) -> None:
         self._repository = repository
@@ -89,32 +90,50 @@ class AgentManager:
         self._graphs: dict[str, CompiledStateGraph[Any, Any, Any, Any]] = {}
         self._configs: dict[str, AgentConfig] = {}
 
-        memory_adapter: ShortTermMemoryAdapter
-        if redis_client is None:
+        if memory_adapter is None:
             memory_adapter = InMemoryShortTermMemoryAdapter()
-        else:
-            memory_adapter = RedisShortTermMemoryAdapter(redis_client)
 
         self._services = RuntimeNodeServices(
             memory=memory_adapter,
-            model=MockModelAdapter(default_model=runtime_settings.default_primary_model),
+            model=self._build_model_adapter(runtime_settings, use_mock_model=use_mock_model),
             tools=MockToolExecutor(),
             repository=repository,
+        )
+
+    def _build_model_adapter(self, runtime_settings: Settings, use_mock_model: bool) -> Any:
+        if use_mock_model:
+            return MockModelAdapter(default_model=runtime_settings.default_primary_model)
+
+        provider = ModelProvider(
+            model_api_key=runtime_settings.model_api_key,
+            model_api_base=runtime_settings.model_api_base,
+            timeout_seconds=runtime_settings.model_timeout_seconds,
+            max_retries=runtime_settings.max_retries,
+        )
+        model_service = ModelService(
+            provider=provider,
+            input_filter=InputFilter(),
+            output_filter=OutputFilter(moderation_api_key=runtime_settings.model_api_key),
+        )
+        return LiteLLMModelAdapter(
+            model_service=model_service,
+            default_model=runtime_settings.default_primary_model,
         )
 
     @classmethod
     def from_resources(
         cls,
         *,
-        db_engine: AsyncEngine,
-        redis_client: Redis,
+        repository: RuntimeRepository,
+        memory_adapter: ShortTermMemoryAdapter,
         checkpointer: RuntimeCheckpointer,
         runtime_settings: Settings = settings,
     ) -> "AgentManager":
         return cls(
-            repository=SqlRuntimeRepository(db_engine),
+            repository=repository,
             checkpointer=checkpointer,
-            redis_client=redis_client,
+            memory_adapter=memory_adapter,
+            use_mock_model=False,
             runtime_settings=runtime_settings,
         )
 
@@ -128,7 +147,8 @@ class AgentManager:
         return cls(
             repository=repository or InMemoryRuntimeRepository(),
             checkpointer=checkpointer or RuntimeCheckpointer(in_memory=True),
-            redis_client=None,
+            memory_adapter=InMemoryShortTermMemoryAdapter(),
+            use_mock_model=True,
             runtime_settings=settings,
         )
 
@@ -183,6 +203,7 @@ class AgentManager:
         thread_id: str,
         stop_after_steps: int | None = None,
     ) -> dict[str, Any]:
+        self._ensure_model_ready()
         if agent_id not in self._graphs:
             await self.initialize_agent(agent_id)
 
@@ -246,6 +267,7 @@ class AgentManager:
         thread_id: str,
         stop_after_steps: int | None = None,
     ) -> dict[str, Any]:
+        self._ensure_model_ready()
         if agent_id not in self._graphs:
             await self.initialize_agent(agent_id)
 
@@ -338,6 +360,7 @@ class AgentManager:
                     "plan": item.step.plan,
                     "result": item.step.result,
                     "model_used": item.step.model_used,
+                    "token_usage": item.step.token_usage,
                     "created_at": item.step.created_at,
                     "tool_logs": [
                         {
@@ -388,6 +411,7 @@ class AgentManager:
             "last_action": "tool_call",
             "last_plan": {},
             "model_used": self._settings.default_primary_model,
+            "token_usage": {},
         }
 
         next_input: AgentState | None = None if resume else initial_state
@@ -453,3 +477,11 @@ class AgentManager:
                 for item in messages_to_dict(state["messages"])
             ],
         }
+
+    def _ensure_model_ready(self) -> None:
+        model = self._services.model
+        has_any_key = getattr(model, "has_any_key", None)
+        if callable(has_any_key) and not bool(has_any_key()):
+            raise ValueError(
+                "No model API key configured. Set MODEL_API_KEY before run."
+            )

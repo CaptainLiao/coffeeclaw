@@ -2,4 +2,6 @@
 .cache/
 *.py[cod]
 *.egg-info/
+*__pycache__
 .env
+.env.local
