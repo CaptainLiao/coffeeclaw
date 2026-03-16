@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from litellm import acompletion, cost_per_token
+from openai import AsyncOpenAI
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 
-@dataclass(frozen=True)
+@dataclass
 class ModelError(Exception):
     provider: str
     status_code: int
@@ -41,11 +41,8 @@ def _extract_status_code(exc: Exception) -> int:
 
 
 def _extract_provider(model: str) -> str:
-    if "/" in model:
-        return model.split("/", 1)[0]
-    if model.startswith("gpt-") or model.startswith("o"):
-        return "openai"
-    return "unknown"
+    normalized = model.strip()
+    return normalized or "unknown"
 
 
 def _should_retry(exception: BaseException) -> bool:
@@ -57,15 +54,8 @@ def _should_retry(exception: BaseException) -> bool:
 class TokenTracker:
     @staticmethod
     def get_cost(model: str, usage: TokenUsage) -> float:
-        try:
-            prompt_cost, completion_cost = cost_per_token(
-                model=model,
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-            )
-        except Exception:
-            return 0.0
-        return float(prompt_cost) + float(completion_cost)
+        _ = (model, usage)
+        return 0.0
 
     @staticmethod
     def from_completion(response: Any) -> TokenUsage:
@@ -105,6 +95,10 @@ class ModelProvider:
         self._model_api_base = model_api_base or None
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
+        self._client = AsyncOpenAI(
+            api_key=self._model_api_key,
+            base_url=self._model_api_base or None,
+        )
 
     def has_any_key(self) -> bool:
         return bool(self._model_api_key)
@@ -116,7 +110,8 @@ class ModelProvider:
         model: str,
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
-    ) -> Any:
+        ) -> Any:
+        normalized_model = self._normalize_model_name(model)
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(self._max_retries),
             wait=wait_exponential(multiplier=0.3, min=0.3, max=4),
@@ -125,15 +120,19 @@ class ModelProvider:
         ):
             with attempt:
                 try:
-                    return await acompletion(
-                        model=model,
-                        messages=messages,
-                        tools=tools,
-                        timeout=self._timeout_seconds,
-                        api_key=self._select_api_key(model),
-                        api_base=self._model_api_base,
-                        **kwargs,
+                    request_kwargs: dict[str, Any] = {
+                        "model": normalized_model,
+                        "messages": messages,
+                        "timeout": self._timeout_seconds,
+                    }
+                    if tools is not None:
+                        request_kwargs["tools"] = tools
+                    request_kwargs.update(kwargs)
+                    self._apply_provider_compat(
+                        model=normalized_model,
+                        request_kwargs=request_kwargs,
                     )
+                    return await self._client.chat.completions.create(**request_kwargs)
                 except Exception as exc:
                     raise ModelError(
                         provider=_extract_provider(model),
@@ -154,17 +153,20 @@ class ModelProvider:
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[Any, None]:
+        normalized_model = self._normalize_model_name(model)
         try:
-            stream = await acompletion(
-                model=model,
-                messages=messages,
-                tools=tools,
-                timeout=self._timeout_seconds,
-                api_key=self._select_api_key(model),
-                api_base=self._model_api_base,
-                stream=True,
-                **kwargs,
-            )
+            request_kwargs: dict[str, Any] = {
+                "model": normalized_model,
+                "messages": messages,
+                "timeout": self._timeout_seconds,
+                "stream": True,
+            }
+            if tools is not None:
+                request_kwargs["tools"] = tools
+            request_kwargs.update(kwargs)
+            self._apply_provider_compat(model=normalized_model, request_kwargs=request_kwargs)
+
+            stream = cast(Any, await self._client.chat.completions.create(**request_kwargs))
             async for chunk in stream:
                 yield chunk
         except Exception as exc:
@@ -174,6 +176,23 @@ class ModelProvider:
                 message=str(exc),
             ) from exc
 
-    def _select_api_key(self, model: str) -> str | None:
-        _ = model
-        return self._model_api_key
+    def _normalize_model_name(self, model: str) -> str:
+        normalized = model.strip()
+        if "/" in normalized:
+            return normalized.split("/", 1)[1]
+        return normalized
+
+    def _apply_provider_compat(self, *, model: str, request_kwargs: dict[str, Any]) -> None:
+        # Kimi OpenAI-compatible endpoints may require reasoning_content for tool calls
+        # when thinking is enabled; disable it to keep payload OpenAI-compatible.
+        if "kimi" not in model.lower():
+            return
+        extra_body = request_kwargs.get("extra_body")
+        if not isinstance(extra_body, dict):
+            extra_body = {}
+        thinking = extra_body.get("thinking")
+        if not isinstance(thinking, dict):
+            thinking = {}
+        thinking.setdefault("type", "disabled")
+        extra_body["thinking"] = thinking
+        request_kwargs["extra_body"] = extra_body

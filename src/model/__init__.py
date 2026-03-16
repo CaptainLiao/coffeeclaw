@@ -106,7 +106,7 @@ class ModelService:
         }
 
     def _extract_tool_calls(self, message: dict[str, Any]) -> list[ModelToolCall]:
-        raw_tool_calls = message.get("tool_calls", [])
+        raw_tool_calls = message.get("tool_calls") or []
         tool_calls: list[ModelToolCall] = []
         for item in raw_tool_calls:
             item_payload = item if isinstance(item, dict) else {

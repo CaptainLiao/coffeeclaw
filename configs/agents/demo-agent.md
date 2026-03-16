@@ -2,10 +2,6 @@
 name: demo-agent
 version: "0.1.0"
 description: "用于 Task 02 验收的演示 Agent"
-model:
-  primary: gpt-4o
-  fallback: gpt-4o-mini
-  routing_strategy: cost_optimized
 capabilities:
   tools:
     - mcp://tools/mock-search@v1

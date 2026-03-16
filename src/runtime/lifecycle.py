@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
-import yaml  # type: ignore[import-untyped]
+import yaml  # type: ignore[import-untyped,unused-ignore]
 from langchain_core.messages import HumanMessage, messages_to_dict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
@@ -62,7 +62,12 @@ class AgentConfig(BaseModel):
 
 class AgentConfigParser:
     @staticmethod
-    def parse(agent_md_path: str | Path) -> AgentConfig:
+    def parse(
+        agent_md_path: str | Path,
+        *,
+        default_primary_model: str | None = None,
+        default_fallback_model: str | None = None,
+    ) -> AgentConfig:
         content = Path(agent_md_path).read_text(encoding="utf-8")
         match = FRONTMATTER_PATTERN.match(content)
         if match is None:
@@ -71,7 +76,53 @@ class AgentConfigParser:
         frontmatter_raw, body = match.groups()
         frontmatter = cast(dict[str, Any], yaml.safe_load(frontmatter_raw) or {})
         frontmatter["system_prompt"] = body.strip()
+        frontmatter["model"] = AgentConfigParser._normalize_model(
+            frontmatter.get("model"),
+            default_primary_model=default_primary_model,
+            default_fallback_model=default_fallback_model,
+        )
         return AgentConfig.model_validate(frontmatter)
+
+    @staticmethod
+    def normalize_inline_config(
+        inline_config: dict[str, Any],
+        *,
+        default_primary_model: str | None = None,
+        default_fallback_model: str | None = None,
+    ) -> dict[str, Any]:
+        normalized = dict(inline_config)
+        normalized["model"] = AgentConfigParser._normalize_model(
+            normalized.get("model"),
+            default_primary_model=default_primary_model,
+            default_fallback_model=default_fallback_model,
+        )
+        return normalized
+
+    @staticmethod
+    def _normalize_model(
+        model_raw: Any,
+        *,
+        default_primary_model: str | None = None,
+        default_fallback_model: str | None = None,
+    ) -> dict[str, str]:
+        model_dict = model_raw if isinstance(model_raw, dict) else {}
+        primary = str(
+            model_dict.get("primary")
+            or default_primary_model
+            or settings.default_primary_model
+        )
+        fallback = str(
+            model_dict.get("fallback")
+            or default_fallback_model
+            or settings.default_fallback_model
+            or primary
+        )
+        routing_strategy = str(model_dict.get("routing_strategy", "cost_optimized"))
+        return {
+            "primary": primary,
+            "fallback": fallback,
+            "routing_strategy": routing_strategy,
+        }
 
 
 class AgentManager:
@@ -161,9 +212,18 @@ class AgentManager:
         await self._repository.ensure_schema()
 
         if config_path is not None:
-            agent_config = AgentConfigParser.parse(config_path)
+            agent_config = AgentConfigParser.parse(
+                config_path,
+                default_primary_model=self._settings.default_primary_model,
+                default_fallback_model=self._settings.default_fallback_model,
+            )
         elif inline_config is not None:
-            agent_config = AgentConfig.model_validate(inline_config)
+            normalized_inline_config = AgentConfigParser.normalize_inline_config(
+                inline_config,
+                default_primary_model=self._settings.default_primary_model,
+                default_fallback_model=self._settings.default_fallback_model,
+            )
+            agent_config = AgentConfig.model_validate(normalized_inline_config)
         else:
             raise ValueError("Either config_path or inline_config must be provided.")
 

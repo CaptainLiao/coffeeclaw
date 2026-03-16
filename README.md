@@ -49,8 +49,15 @@ CoffeeClaw 是一个基于 FastAPI、LangGraph、Postgres 和 Redis 的 Agent �
 - `LOG_LEVEL`
 - `MODEL_API_KEY`（推荐，单一 OpenAI 兼容入口）
 - `MODEL_API_BASE`（可选，自建/第三方 OpenAI 兼容地址）
+- `DEFAULT_PRIMARY_MODEL`
+- `DEFAULT_FALLBACK_MODEL`
 - `MODEL_TIMEOUT_SECONDS`
 - `MAX_RETRIES`
+
+模型选择规则：
+
+- configs\agents 配置里如果不写 `model`，自动使用 `DEFAULT_PRIMARY_MODEL` / `DEFAULT_FALLBACK_MODEL`
+- 这样切换模型时通常只需要改 `.env.local`，不需要改每个 agent 文件
 
 默认的 Docker Compose 启动方式下，Postgres 和 Redis 都运行在容器中，应用容器会自动连接它们。
 

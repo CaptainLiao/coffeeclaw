@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import structlog
-from litellm import amoderation
 
 logger = structlog.get_logger(__name__)
 
@@ -75,21 +74,7 @@ class OutputFilter:
             return False
 
         if self._moderation_api_key:
-            try:
-                result = await amoderation(
-                    model="omni-moderation-latest",
-                    input=text,
-                    api_key=self._moderation_api_key,
-                )
-                payload = result if isinstance(result, dict) else result.model_dump()
-                records = payload.get("results", [])
-                if records and bool(records[0].get("flagged", False)):
-                    return True
-            except Exception as exc:
-                logger.warning(
-                    "Moderation API unavailable, fallback to local rules",
-                    error=str(exc),
-                )
+            logger.debug("Remote moderation disabled; using local safety rules only")
 
         return bool(re.search(r"\b(kill|bomb|terror|violence)\b", text, flags=re.IGNORECASE))
 

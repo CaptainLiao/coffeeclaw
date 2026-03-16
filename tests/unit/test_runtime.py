@@ -23,7 +23,11 @@ async def always_healthy(_: object) -> bool:
 
 @pytest.mark.asyncio
 async def test_agent_config_parser_reads_demo_agent() -> None:
-    config = AgentConfigParser.parse(CONFIG_PATH)
+    config = AgentConfigParser.parse(
+        CONFIG_PATH,
+        default_primary_model="gpt-4o",
+        default_fallback_model="gpt-4o-mini",
+    )
 
     assert config.name == "demo-agent"
     assert config.model.primary == "gpt-4o"
