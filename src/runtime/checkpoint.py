@@ -10,15 +10,15 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 
-def to_checkpoint_dsn(postgres_dsn: str) -> str:
-    parsed = urlparse(postgres_dsn)
+def to_checkpoint_dsn(sql_dsn: str) -> str:
+    parsed = urlparse(sql_dsn)
     scheme = parsed.scheme.replace("+asyncpg", "")
     return urlunparse(parsed._replace(scheme=scheme))
 
 
 @dataclass
 class RuntimeCheckpointer:
-    postgres_dsn: str | None = None
+    sql_dsn: str | None = None
     in_memory: bool = False
 
     def __post_init__(self) -> None:
@@ -29,11 +29,11 @@ class RuntimeCheckpointer:
         if self._checkpointer is not None:
             return self._checkpointer
 
-        if self.in_memory or self.postgres_dsn is None:
+        if self.in_memory or self.sql_dsn is None:
             self._checkpointer = InMemorySaver()
             return self._checkpointer
 
-        self._context = AsyncPostgresSaver.from_conn_string(to_checkpoint_dsn(self.postgres_dsn))
+        self._context = AsyncPostgresSaver.from_conn_string(to_checkpoint_dsn(self.sql_dsn))
         checkpointer = await self._context.__aenter__()
         await checkpointer.setup()
         self._checkpointer = checkpointer

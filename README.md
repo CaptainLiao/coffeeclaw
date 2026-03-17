@@ -48,7 +48,7 @@ CoffeeClaw 是一个基于 FastAPI、LangGraph、Postgres 和 Redis 的 Agent �
 
 主要环境变量：
 
-- `POSTGRES_DSN`
+- `SQL_DSN`
 - `REDIS_URL`
 - `RUNTIME_REPOSITORY_BACKEND`（`postgres` 或 `memory`）
 - `SHORTTERM_MEMORY_BACKEND`（`redis` 或 `memory`）

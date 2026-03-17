@@ -87,7 +87,7 @@ def build_agent_graph(agent_config: AgentConfig) -> CompiledGraph:
     )
 
     # 持久化 checkpoint（支持人工审批暂停恢复）
-    checkpointer = PostgresSaver.from_conn_string(settings.POSTGRES_DSN)
+    checkpointer = PostgresSaver.from_conn_string(settings.SQL_DSN)
     return graph.compile(checkpointer=checkpointer)
 ```
 

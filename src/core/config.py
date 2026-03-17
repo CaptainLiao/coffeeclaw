@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_api_key: str
     model_api_base: str
 
-    postgres_dsn: str
+    sql_dsn: str
     redis_url: str
     runtime_repository_backend: str
     shortterm_memory_backend: str

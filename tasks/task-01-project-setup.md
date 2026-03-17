@@ -90,7 +90,7 @@ CoffeeClaw 是企业级 AI Agent 开发平台，v1 采用 Python + FastAPI + Lan
   MODEL_API_BASE=
   
   # Database
-  POSTGRES_DSN=postgresql+asyncpg://user:pass@localhost:5432/coffeeclaw
+  SQL_DSN=postgresql+asyncpg://user:pass@localhost:5432/coffeeclaw
   REDIS_URL=redis://localhost:6379/0
   
   # App

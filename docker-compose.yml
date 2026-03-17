@@ -9,7 +9,7 @@ services:
     volumes:
       - .:/app
     environment:
-      - POSTGRES_DSN=postgresql+asyncpg://coffeeclaw:coffeeclaw@postgres:5432/coffeeclaw
+      - SQL_DSN=postgresql+asyncpg://coffeeclaw:coffeeclaw@postgres:5432/coffeeclaw
       - REDIS_URL=redis://redis:6379/0
       - APP_ENV=development
       - LOG_LEVEL=INFO
