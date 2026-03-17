@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS task_steps (
     latency_ms INT,
     model_used VARCHAR(100),
     token_usage JSONB,        -- {prompt_tokens, completion_tokens}
+    trace_meta JSONB,         -- {node_role, worker_agent, parent_step_id, orchestrator_task_id}
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

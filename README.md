@@ -12,6 +12,7 @@ CoffeeClaw 是一个基于 FastAPI、LangGraph、Postgres 和 Redis 的 Agent �
 - 短期记忆与任务轨迹落库
 - OpenAI 兼容模型接入与基础安全过滤
 - MCP 工具注册/调用、Skill 装载与注入
+- 多 Agent 编排（Supervisor + 专家 Agent 路由）
 
 ## 当前目录结构
 
@@ -161,6 +162,8 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8000/health | Select-Object 
 - `GET /api/v1/tools/{tool_name}`：查看工具定义详情
 - `POST /api/v1/tools/{tool_name}/test`：直接测试工具调用
 - `GET /api/v1/skills`：查看已加载技能
+- `GET /api/v1/orchestrator/agents`：查看可用专家 Agent
+- `POST /api/v1/orchestrator/run`：发起多 Agent 协作任务
 
 示例（PowerShell）：
 

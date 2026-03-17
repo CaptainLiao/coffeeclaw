@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "openai>=1.0",
     "langgraph>=0.2",
+    "langgraph-supervisor>=0.0.2",
     "langgraph-checkpoint-postgres",
     "redis>=5.0",
     "asyncpg>=0.29",

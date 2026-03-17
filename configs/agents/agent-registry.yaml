@@ -1,0 +1,38 @@
+agents:
+  - name: coordinator
+    type: orchestrator
+    description: "任务解析与协调"
+    capabilities: [intent_analysis, task_decomposition, conflict_resolution]
+    tools: []
+    config_path: ""
+
+  - name: flight-expert
+    type: domain_expert
+    description: "机票领域专家"
+    capabilities: [fare_rules, rebooking, flight_status]
+    tools: [mock-search, mock-plan]
+    config_path: "configs/agents/flight-expert.md"
+
+  - name: hotel-expert
+    type: domain_expert
+    description: "酒店领域专家"
+    capabilities: [room_availability, pricing, amenities]
+    tools: [mock-search, mock-report]
+    config_path: "configs/agents/hotel-expert.md"
+
+  - name: general-expert
+    type: domain_expert
+    description: "通用兜底专家"
+    capabilities: [general_reasoning, clarification, handoff]
+    tools: [mock-search, mock-report]
+    config_path: "configs/agents/general-expert.md"
+
+routing_rules:
+  - intent: "flight_*"
+    agent: "flight-expert"
+    keywords: ["flight", "ticket", "航班", "机票", "改签"]
+  - intent: "hotel_*"
+    agent: "hotel-expert"
+    keywords: ["hotel", "room", "酒店", "住宿", "留宿"]
+  - intent: "default_*"
+    agent: "general-expert"

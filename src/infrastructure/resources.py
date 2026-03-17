@@ -5,6 +5,8 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from src.core.config import Settings
+from src.orchestrator.registry import AgentRegistry
+from src.orchestrator.supervisor import SupervisorOrchestrator
 from src.runtime.adapters import (
     InMemoryShortTermMemoryAdapter,
     RedisShortTermMemoryAdapter,
@@ -30,6 +32,8 @@ class AppResources:
     tool_registry: ToolRegistry
     tool_caller: ToolCaller
     skill_manager: SkillManager
+    orchestrator_registry: AgentRegistry
+    orchestrator_manager: SupervisorOrchestrator
     startup_health: HealthStatus
 
 
@@ -79,6 +83,24 @@ async def init_resources(settings: Settings) -> AppResources:
     skill_manager = SkillManager()
     skill_manager.load_from_dir("configs/skills")
     tool_caller = ToolCaller(registry=tool_registry)
+    orchestrator_registry = AgentRegistry.from_file("configs/agents/agent-registry.yaml")
+    from src.runtime.lifecycle import AgentManager
+
+    orchestrator_agent_manager = AgentManager.from_resources(
+        repository=runtime_repository,
+        memory_adapter=memory_adapter,
+        checkpointer=runtime_checkpointer,
+        tool_caller=tool_caller,
+        skill_manager=skill_manager,
+        runtime_settings=settings,
+    )
+    orchestrator_manager = SupervisorOrchestrator(
+        registry=orchestrator_registry,
+        agent_manager=orchestrator_agent_manager,
+        repository=runtime_repository,
+    )
+    # Fail-fast: ensure langgraph-supervisor dependency is available at startup.
+    orchestrator_manager.build_supervisor_graph()
 
     startup_health = await HealthStatus.build(db_engine=db_engine, redis_client=redis_client)
     return AppResources(
@@ -90,6 +112,8 @@ async def init_resources(settings: Settings) -> AppResources:
         tool_registry=tool_registry,
         tool_caller=tool_caller,
         skill_manager=skill_manager,
+        orchestrator_registry=orchestrator_registry,
+        orchestrator_manager=orchestrator_manager,
         startup_health=startup_health,
     )
 

@@ -51,6 +51,7 @@ class TaskStepRecord:
     result: dict[str, Any]
     model_used: str
     token_usage: dict[str, Any]
+    trace_meta: dict[str, Any]
     created_at: datetime
 
 
@@ -99,6 +100,9 @@ class RuntimeRepository:
     async def get_agent(self, agent_id: str) -> AgentRecord | None:
         raise NotImplementedError
 
+    async def get_agent_by_name(self, name: str) -> AgentRecord | None:
+        raise NotImplementedError
+
     async def create_task(self, *, agent_id: str, goal: str, thread_id: str, status: str) -> TaskRecord:
         raise NotImplementedError
 
@@ -134,6 +138,7 @@ class RuntimeRepository:
         result: dict[str, Any],
         model_used: str,
         token_usage: dict[str, Any] | None = None,
+        trace_meta: dict[str, Any] | None = None,
     ) -> TaskStepRecord:
         raise NotImplementedError
 
@@ -202,9 +207,11 @@ class SqlRuntimeRepository(RuntimeRepository):
                 latency_ms INT,
                 model_used VARCHAR(100),
                 token_usage JSONB,
+                trace_meta JSONB,
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             )
             """,
+            "ALTER TABLE task_steps ADD COLUMN IF NOT EXISTS trace_meta JSONB",
             """
             CREATE TABLE IF NOT EXISTS tool_logs (
                 id UUID PRIMARY KEY,
@@ -283,6 +290,33 @@ class SqlRuntimeRepository(RuntimeRepository):
                     """
                 ),
                 {"id": agent_id},
+            )
+            row = result.mappings().first()
+        if row is None:
+            return None
+        return AgentRecord(
+            id=str(row["id"]),
+            name=str(row["name"]),
+            version=str(row["version"]),
+            config=dict(row["config"]),
+            status=str(row["status"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    async def get_agent_by_name(self, name: str) -> AgentRecord | None:
+        async with self._engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    SELECT id, name, version, config, status, created_at, updated_at
+                    FROM agents
+                    WHERE name = :name
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {"name": name},
             )
             row = result.mappings().first()
         if row is None:
@@ -475,6 +509,7 @@ class SqlRuntimeRepository(RuntimeRepository):
         result: dict[str, Any],
         model_used: str,
         token_usage: dict[str, Any] | None = None,
+        trace_meta: dict[str, Any] | None = None,
     ) -> TaskStepRecord:
         step_id = str(uuid.uuid4())
         now = utcnow()
@@ -483,11 +518,11 @@ class SqlRuntimeRepository(RuntimeRepository):
                 text(
                     """
                     INSERT INTO task_steps (
-                        id, task_id, step_index, action_type, plan, result, latency_ms, model_used, token_usage, created_at
+                        id, task_id, step_index, action_type, plan, result, latency_ms, model_used, token_usage, trace_meta, created_at
                     )
                     VALUES (
                         :id, :task_id, :step_index, :action_type,
-                        CAST(:plan AS JSONB), CAST(:result AS JSONB), 0, :model_used, CAST(:token_usage AS JSONB), :created_at
+                        CAST(:plan AS JSONB), CAST(:result AS JSONB), 0, :model_used, CAST(:token_usage AS JSONB), CAST(:trace_meta AS JSONB), :created_at
                     )
                     """
                 ),
@@ -500,6 +535,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                     "result": json.dumps(result),
                     "model_used": model_used,
                     "token_usage": json.dumps(token_usage or {}),
+                    "trace_meta": json.dumps(trace_meta or {}),
                     "created_at": now,
                 },
             )
@@ -512,6 +548,7 @@ class SqlRuntimeRepository(RuntimeRepository):
             result,
             model_used,
             token_usage or {},
+            trace_meta or {},
             now,
         )
 
@@ -520,7 +557,7 @@ class SqlRuntimeRepository(RuntimeRepository):
             result = await connection.execute(
                 text(
                     """
-                    SELECT id, task_id, step_index, action_type, plan, result, model_used, token_usage, created_at
+                    SELECT id, task_id, step_index, action_type, plan, result, model_used, token_usage, trace_meta, created_at
                     FROM task_steps
                     WHERE task_id = :task_id
                     ORDER BY step_index DESC, created_at DESC
@@ -541,6 +578,7 @@ class SqlRuntimeRepository(RuntimeRepository):
             result=dict(row["result"]),
             model_used=str(row["model_used"]),
             token_usage=dict(row["token_usage"] or {}),
+            trace_meta=dict(row["trace_meta"] or {}),
             created_at=row["created_at"],
         )
 
@@ -627,7 +665,7 @@ class SqlRuntimeRepository(RuntimeRepository):
             step_result = await connection.execute(
                 text(
                     """
-                    SELECT id, task_id, step_index, action_type, plan, result, model_used, token_usage, created_at
+                    SELECT id, task_id, step_index, action_type, plan, result, model_used, token_usage, trace_meta, created_at
                     FROM task_steps
                     WHERE task_id = :task_id
                     ORDER BY step_index ASC, created_at ASC
@@ -680,6 +718,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 result=dict(row["result"]),
                 model_used=str(row["model_used"]),
                 token_usage=dict(row["token_usage"] or {}),
+                trace_meta=dict(row["trace_meta"] or {}),
                 created_at=row["created_at"],
             )
             steps.append(TaskTraceStep(step=step, tool_logs=logs_by_step.get(step.id, [])))
@@ -718,6 +757,11 @@ class InMemoryRuntimeRepository(RuntimeRepository):
 
     async def get_agent(self, agent_id: str) -> AgentRecord | None:
         return self.agents.get(agent_id)
+
+    async def get_agent_by_name(self, name: str) -> AgentRecord | None:
+        candidates = [agent for agent in self.agents.values() if agent.name == name]
+        candidates.sort(key=lambda agent: agent.created_at, reverse=True)
+        return candidates[0] if candidates else None
 
     async def create_task(self, *, agent_id: str, goal: str, thread_id: str, status: str) -> TaskRecord:
         task = TaskRecord(str(uuid.uuid4()), agent_id, goal, thread_id, status, 0, {"thread_id": thread_id}, utcnow())
@@ -772,6 +816,7 @@ class InMemoryRuntimeRepository(RuntimeRepository):
         result: dict[str, Any],
         model_used: str,
         token_usage: dict[str, Any] | None = None,
+        trace_meta: dict[str, Any] | None = None,
     ) -> TaskStepRecord:
         step = TaskStepRecord(
             str(uuid.uuid4()),
@@ -782,6 +827,7 @@ class InMemoryRuntimeRepository(RuntimeRepository):
             result,
             model_used,
             token_usage or {},
+            trace_meta or {},
             utcnow(),
         )
         self.task_steps[task_id].append(step)

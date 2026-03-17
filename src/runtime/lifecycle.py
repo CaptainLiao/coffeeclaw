@@ -438,6 +438,7 @@ class AgentManager:
                     "result": item.step.result,
                     "model_used": item.step.model_used,
                     "token_usage": item.step.token_usage,
+                    "trace_meta": item.step.trace_meta,
                     "created_at": item.step.created_at,
                     "tool_logs": [
                         {

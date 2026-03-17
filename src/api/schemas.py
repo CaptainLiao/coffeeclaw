@@ -100,6 +100,7 @@ class TaskTraceStepResponse(BaseModel):
     result: dict[str, Any]
     model_used: str
     token_usage: dict[str, Any] = Field(default_factory=dict)
+    trace_meta: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     tool_logs: list[TaskTraceToolLogResponse]
 
@@ -153,3 +154,36 @@ class SkillSummaryResponse(BaseModel):
     version: str
     description: str
     require_tools: list[str] = Field(default_factory=list)
+
+
+class OrchestratorAgentResponse(BaseModel):
+    name: str
+    type: str
+    description: str
+    capabilities: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+
+
+class OrchestratorRunRequest(BaseModel):
+    goal: str
+    thread_id: str
+
+
+class OrchestratorDelegationResponse(BaseModel):
+    worker: str
+    worker_agent_id: str
+    worker_task_id: str
+    status: str
+    reflection: str
+    step_count: int
+    error: dict[str, Any] | None = None
+
+
+class OrchestratorRunResponse(BaseModel):
+    task_id: str
+    thread_id: str
+    status: str
+    intent: str
+    mode: str
+    delegations: list[OrchestratorDelegationResponse] = Field(default_factory=list)
+    summary: str

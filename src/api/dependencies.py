@@ -2,7 +2,12 @@ from fastapi import Request
 from redis.asyncio.client import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.core.state import get_agent_manager_state, get_app_resources
+from src.core.state import (
+    get_agent_manager_state,
+    get_app_resources,
+    get_orchestrator_manager_state,
+)
+from src.orchestrator.supervisor import SupervisorOrchestrator
 from src.runtime.lifecycle import AgentManager
 
 
@@ -28,4 +33,15 @@ def get_agent_manager(request: Request) -> AgentManager:
         skill_manager=resources.skill_manager,
     )
     request.app.state.agent_manager = manager
+    return manager
+
+
+def get_orchestrator_manager(request: Request) -> SupervisorOrchestrator:
+    manager = get_orchestrator_manager_state(request.app)
+    if manager is not None:
+        return manager
+
+    resources = get_app_resources(request.app)
+    manager = resources.orchestrator_manager
+    request.app.state.orchestrator_manager = manager
     return manager

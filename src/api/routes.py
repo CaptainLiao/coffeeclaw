@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.dependencies import get_agent_manager
+from src.api.dependencies import get_agent_manager, get_orchestrator_manager
 from src.api.schemas import (
     AgentPauseRequest,
     AgentResumeRequest,
@@ -11,6 +11,9 @@ from src.api.schemas import (
     AgentStatusResponse,
     AgentSummaryResponse,
     CreateAgentRequest,
+    OrchestratorAgentResponse,
+    OrchestratorRunRequest,
+    OrchestratorRunResponse,
     SkillSummaryResponse,
     SuccessResponse,
     TaskTraceResponse,
@@ -18,6 +21,7 @@ from src.api.schemas import (
     ToolTestRequest,
     ToolTestResponse,
 )
+from src.orchestrator.supervisor import SupervisorOrchestrator
 from src.runtime.lifecycle import AgentManager
 
 api_router = APIRouter()
@@ -189,3 +193,33 @@ async def list_skills(
     return SuccessResponse(
         data=[SkillSummaryResponse(**item) for item in manager.list_skills()]
     )
+
+
+@api_router.get(
+    "/orchestrator/agents",
+    response_model=SuccessResponse[list[OrchestratorAgentResponse]],
+    tags=["orchestrator"],
+)
+async def list_orchestrator_agents(
+    manager: Annotated[SupervisorOrchestrator, Depends(get_orchestrator_manager)],
+) -> SuccessResponse[list[OrchestratorAgentResponse]]:
+    agents = await manager.list_agents()
+    return SuccessResponse(
+        data=[OrchestratorAgentResponse(**item) for item in agents]
+    )
+
+
+@api_router.post(
+    "/orchestrator/run",
+    response_model=SuccessResponse[OrchestratorRunResponse],
+    tags=["orchestrator"],
+)
+async def run_orchestrator(
+    request: OrchestratorRunRequest,
+    manager: Annotated[SupervisorOrchestrator, Depends(get_orchestrator_manager)],
+) -> SuccessResponse[OrchestratorRunResponse]:
+    try:
+        result = await manager.run(goal=request.goal, thread_id=request.thread_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SuccessResponse(data=OrchestratorRunResponse(**result))
