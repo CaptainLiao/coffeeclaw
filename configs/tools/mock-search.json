@@ -1,0 +1,29 @@
+{
+  "name": "mock-search",
+  "version": "1.0.0",
+  "description": "Mock search tool used by demo agent.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "goal": {
+        "type": "string"
+      },
+      "step": {
+        "type": "integer"
+      },
+      "memory_context": {
+        "type": "string"
+      }
+    },
+    "required": ["goal", "step"],
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object"
+  },
+  "execution": {
+    "timeout_ms": 5000,
+    "sandbox": "process",
+    "required_permissions": []
+  }
+}

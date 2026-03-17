@@ -24,6 +24,8 @@ def get_agent_manager(request: Request) -> AgentManager:
         repository=resources.runtime_repository,
         memory_adapter=resources.memory_adapter,
         checkpointer=resources.runtime_checkpointer,
+        tool_caller=resources.tool_caller,
+        skill_manager=resources.skill_manager,
     )
     request.app.state.agent_manager = manager
     return manager

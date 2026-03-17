@@ -19,6 +19,7 @@ from redis.asyncio.client import Redis
 
 from src.memory.shortterm import ShortTermMemory
 from src.model import ModelResponse, ModelService
+from src.tools import ToolCaller
 
 
 class ToolCall(TypedDict):
@@ -68,7 +69,7 @@ class ToolExecutor(Protocol):
     async def list_tools(self, agent_config: dict[str, Any]) -> list[str]:
         ...
 
-    async def execute(self, tool_call: ToolCall) -> ToolResult:
+    async def execute(self, tool_call: ToolCall, agent_config: dict[str, Any]) -> ToolResult:
         ...
 
 
@@ -291,14 +292,14 @@ class MockToolExecutor:
             return [str(tool).split("/")[-1].split("@")[0] for tool in tools]
         return ["mock_tool_a", "mock_tool_b", "mock_tool_c"]
 
-    async def execute(self, tool_call: ToolCall) -> ToolResult:
+    async def execute(self, tool_call: ToolCall, agent_config: dict[str, Any]) -> ToolResult:
+        _ = agent_config
         started_at = time.perf_counter()
         goal = str(tool_call["arguments"].get("goal", ""))
         should_fail = (
             "fail_tool" in goal.lower()
             and int(tool_call["arguments"].get("step", 0)) >= 2
         )
-
         if should_fail:
             return ToolResult(
                 tool_call_id=tool_call["id"],
@@ -308,7 +309,6 @@ class MockToolExecutor:
                 error_message="mock tool failure requested by goal",
                 latency_ms=int((time.perf_counter() - started_at) * 1000),
             )
-
         return ToolResult(
             tool_call_id=tool_call["id"],
             tool_name=tool_call["name"],
@@ -319,6 +319,29 @@ class MockToolExecutor:
             },
             error_message=None,
             latency_ms=int((time.perf_counter() - started_at) * 1000),
+        )
+
+
+class RegistryToolExecutor:
+    def __init__(self, *, tool_caller: ToolCaller) -> None:
+        self._tool_caller = tool_caller
+
+    async def list_tools(self, agent_config: dict[str, Any]) -> list[str]:
+        return self._tool_caller.list_for_agent(agent_config)
+
+    async def execute(self, tool_call: ToolCall, agent_config: dict[str, Any]) -> ToolResult:
+        result = await self._tool_caller.call(
+            tool_name=tool_call["name"],
+            input_params=tool_call["arguments"],
+            agent_config=agent_config,
+        )
+        return ToolResult(
+            tool_call_id=tool_call["id"],
+            tool_name=tool_call["name"],
+            success=result.success,
+            output=result.output or {},
+            error_message=result.error,
+            latency_ms=result.latency_ms,
         )
 
 

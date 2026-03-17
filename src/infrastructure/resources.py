@@ -13,6 +13,9 @@ from src.runtime.adapters import (
 from src.runtime.checkpoint import RuntimeCheckpointer
 from src.runtime.repository import RuntimeRepository, SqlRuntimeRepository
 from src.services.health import HealthStatus
+from src.tools import ToolCaller
+from src.tools.registry import ToolRegistry
+from src.tools.skills import SkillManager
 
 logger = structlog.get_logger(__name__)
 
@@ -24,6 +27,9 @@ class AppResources:
     runtime_repository: RuntimeRepository
     memory_adapter: ShortTermMemoryAdapter
     runtime_checkpointer: RuntimeCheckpointer
+    tool_registry: ToolRegistry
+    tool_caller: ToolCaller
+    skill_manager: SkillManager
     startup_health: HealthStatus
 
 
@@ -68,6 +74,12 @@ async def init_resources(settings: Settings) -> AppResources:
     )
     await runtime_checkpointer.initialize()
 
+    tool_registry = ToolRegistry.instance()
+    tool_registry.load_from_dir("configs/tools")
+    skill_manager = SkillManager()
+    skill_manager.load_from_dir("configs/skills")
+    tool_caller = ToolCaller(registry=tool_registry)
+
     startup_health = await HealthStatus.build(db_engine=db_engine, redis_client=redis_client)
     return AppResources(
         db_engine=db_engine,
@@ -75,6 +87,9 @@ async def init_resources(settings: Settings) -> AppResources:
         runtime_repository=runtime_repository,
         memory_adapter=memory_adapter,
         runtime_checkpointer=runtime_checkpointer,
+        tool_registry=tool_registry,
+        tool_caller=tool_caller,
+        skill_manager=skill_manager,
         startup_health=startup_health,
     )
 

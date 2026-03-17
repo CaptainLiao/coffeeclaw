@@ -18,7 +18,7 @@ from src.runtime.adapters import (
     InMemoryShortTermMemoryAdapter,
     LiteLLMModelAdapter,
     MockModelAdapter,
-    MockToolExecutor,
+    RegistryToolExecutor,
     ShortTermMemoryAdapter,
 )
 from src.runtime.checkpoint import RuntimeCheckpointer
@@ -28,6 +28,9 @@ from src.runtime.repository import (
     InMemoryRuntimeRepository,
     RuntimeRepository,
 )
+from src.tools import ToolCaller
+from src.tools.registry import ToolRegistry
+from src.tools.skills import SkillManager
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
@@ -131,6 +134,8 @@ class AgentManager:
         *,
         repository: RuntimeRepository,
         checkpointer: RuntimeCheckpointer,
+        tool_caller: ToolCaller,
+        skill_manager: SkillManager | None = None,
         memory_adapter: ShortTermMemoryAdapter | None = None,
         use_mock_model: bool = False,
         runtime_settings: Settings = settings,
@@ -138,6 +143,8 @@ class AgentManager:
         self._repository = repository
         self._checkpointer = checkpointer
         self._settings = runtime_settings
+        self._tool_caller = tool_caller
+        self._skill_manager = skill_manager or SkillManager()
         self._graphs: dict[str, CompiledStateGraph[Any, Any, Any, Any]] = {}
         self._configs: dict[str, AgentConfig] = {}
 
@@ -147,7 +154,7 @@ class AgentManager:
         self._services = RuntimeNodeServices(
             memory=memory_adapter,
             model=self._build_model_adapter(runtime_settings, use_mock_model=use_mock_model),
-            tools=MockToolExecutor(),
+            tools=RegistryToolExecutor(tool_caller=self._tool_caller),
             repository=repository,
         )
 
@@ -178,11 +185,15 @@ class AgentManager:
         repository: RuntimeRepository,
         memory_adapter: ShortTermMemoryAdapter,
         checkpointer: RuntimeCheckpointer,
+        tool_caller: ToolCaller,
+        skill_manager: SkillManager,
         runtime_settings: Settings = settings,
     ) -> "AgentManager":
         return cls(
             repository=repository,
             checkpointer=checkpointer,
+            tool_caller=tool_caller,
+            skill_manager=skill_manager,
             memory_adapter=memory_adapter,
             use_mock_model=False,
             runtime_settings=runtime_settings,
@@ -195,9 +206,15 @@ class AgentManager:
         repository: RuntimeRepository | None = None,
         checkpointer: RuntimeCheckpointer | None = None,
     ) -> "AgentManager":
+        registry = ToolRegistry()
+        registry.load_from_dir("configs/tools")
+        skills = SkillManager()
+        skills.load_from_dir("configs/skills")
         return cls(
             repository=repository or InMemoryRuntimeRepository(),
             checkpointer=checkpointer or RuntimeCheckpointer(in_memory=True),
+            tool_caller=ToolCaller(registry=registry),
+            skill_manager=skills,
             memory_adapter=InMemoryShortTermMemoryAdapter(),
             use_mock_model=True,
             runtime_settings=settings,
@@ -463,7 +480,7 @@ class AgentManager:
             "step_count": 0,
             "reflection": "",
             "status": "running",
-            "agent_config": agent_config.model_dump(),
+            "agent_config": self._build_runtime_agent_config(agent_config),
             "memory_context": "",
             "agent_id": agent_id,
             "task_id": task_id,
@@ -537,6 +554,49 @@ class AgentManager:
                 for item in messages_to_dict(state["messages"])
             ],
         }
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        return self._tool_caller.list_tools()
+
+    def get_tool(self, tool_name: str) -> dict[str, Any] | None:
+        return self._tool_caller.get_tool(tool_name)
+
+    def list_skills(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": skill.name,
+                "version": skill.version,
+                "description": skill.description,
+                "require_tools": skill.require_tools,
+            }
+            for skill in self._skill_manager.list_all()
+        ]
+
+    async def test_tool(
+        self,
+        *,
+        tool_name: str,
+        input_params: dict[str, Any],
+        agent_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        result = await self._tool_caller.call(
+            tool_name=tool_name,
+            input_params=input_params,
+            agent_config=agent_config or {"policy": {"blocked_actions": []}},
+        )
+        return {
+            "tool_name": tool_name,
+            "success": result.success,
+            "output": result.output,
+            "error": result.error,
+            "latency_ms": result.latency_ms,
+        }
+
+    def _build_runtime_agent_config(self, agent_config: AgentConfig) -> dict[str, Any]:
+        config = agent_config.model_dump()
+        prompt = str(config.get("system_prompt", ""))
+        config["system_prompt"] = self._skill_manager.inject_skills_for_agent(config, prompt)
+        return config
 
     def _ensure_model_ready(self) -> None:
         model = self._services.model

@@ -89,7 +89,12 @@ def create_act_node(services: RuntimeNodeServices) -> NodeFn:
 
         results: list[ToolResult] = []
         for tool_call in tool_calls:
-            results.append(await services.tools.execute(cast(ToolCall, tool_call)))
+            results.append(
+                await services.tools.execute(
+                    cast(ToolCall, tool_call),
+                    cast(dict[str, Any], state["agent_config"]),
+                )
+            )
 
         messages = cast(list[Any], state["messages"]) + build_tool_messages(results)
         return {

@@ -1,14 +1,17 @@
 # CoffeeClaw
 
-CoffeeClaw 是一个基于 FastAPI、LangGraph、Postgres 和 Redis 的 Agent 平台后端脚手架。
+CoffeeClaw 是一个基于 FastAPI、LangGraph、Postgres 和 Redis 的 Agent 平台后端。
 
-当前仓库主要完成了项目基础设施搭建：
+当前仓库已完成：
 
 - FastAPI 应用启动与装配
 - 基于 Docker 的本地开发环境
 - Postgres 与 Redis 依赖接入
 - 基础健康检查与日志链路
-- 为后续 `runtime`、`memory`、`model`、`workflow`、`tools` 等能力预留模块骨架
+- Agent Runtime（创建/运行/暂停/恢复/状态/Trace）
+- 短期记忆与任务轨迹落库
+- OpenAI 兼容模型接入与基础安全过滤
+- MCP 工具注册/调用、Skill 装载与注入
 
 ## 当前目录结构
 
@@ -19,7 +22,11 @@ CoffeeClaw 是一个基于 FastAPI、LangGraph、Postgres 和 Redis 的 Agent �
 - `src/observability/`：日志、请求上下文、异常处理
 - `src/infrastructure/`：外部资源初始化与释放
 - `src/services/`：少量横切应用服务
-- `src/runtime/`、`src/orchestrator/`、`src/workflow/`、`src/tools/`、`src/memory/`、`src/model/`：后续承载核心业务能力
+- `src/runtime/`：Agent 生命周期、图执行、状态流转
+- `src/model/`：模型调用、路由、输入输出安全过滤
+- `src/tools/`：MCP 工具定义、注册表、执行器、Skill 管理
+- `src/memory/`：短期记忆存储适配
+- `src/orchestrator/`、`src/workflow/`：后续任务扩展
 
 更多说明见 `docs/architecture.md` 和 `prd.md`。
 
@@ -146,6 +153,19 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8000/health | Select-Object 
 
 ```text
 200
+```
+
+## 工具与技能接口
+
+- `GET /api/v1/tools`：查看已注册工具
+- `GET /api/v1/tools/{tool_name}`：查看工具定义详情
+- `POST /api/v1/tools/{tool_name}/test`：直接测试工具调用
+- `GET /api/v1/skills`：查看已加载技能
+
+示例（PowerShell）：
+
+```powershell
+Invoke-WebRequest -UseBasicParsing http://localhost:8000/api/v1/tools | Select-Object -ExpandProperty Content
 ```
 
 ## 使用 Python 本地启动

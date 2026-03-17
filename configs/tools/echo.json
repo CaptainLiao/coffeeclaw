@@ -1,0 +1,33 @@
+{
+  "name": "echo",
+  "version": "1.0.0",
+  "description": "Echo input payload for testing.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "message"
+    ],
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "echo": {
+        "type": "object"
+      }
+    },
+    "required": [
+      "echo"
+    ]
+  },
+  "execution": {
+    "timeout_ms": 5000,
+    "sandbox": "process",
+    "required_permissions": []
+  }
+}

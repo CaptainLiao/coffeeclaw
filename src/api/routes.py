@@ -11,8 +11,12 @@ from src.api.schemas import (
     AgentStatusResponse,
     AgentSummaryResponse,
     CreateAgentRequest,
+    SkillSummaryResponse,
     SuccessResponse,
     TaskTraceResponse,
+    ToolDefinitionResponse,
+    ToolTestRequest,
+    ToolTestResponse,
 )
 from src.runtime.lifecycle import AgentManager
 
@@ -126,3 +130,62 @@ async def get_task_trace(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return SuccessResponse(data=TaskTraceResponse(**result))
+
+
+@api_router.get(
+    "/tools",
+    response_model=SuccessResponse[list[ToolDefinitionResponse]],
+    tags=["tools"],
+)
+async def list_tools(
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> SuccessResponse[list[ToolDefinitionResponse]]:
+    return SuccessResponse(
+        data=[ToolDefinitionResponse(**item) for item in manager.list_tools()]
+    )
+
+
+@api_router.get(
+    "/tools/{tool_name}",
+    response_model=SuccessResponse[ToolDefinitionResponse],
+    tags=["tools"],
+)
+async def get_tool(
+    tool_name: str,
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> SuccessResponse[ToolDefinitionResponse]:
+    tool = manager.get_tool(tool_name)
+    if tool is None:
+        raise HTTPException(status_code=404, detail=f"Tool {tool_name} not found.")
+    return SuccessResponse(data=ToolDefinitionResponse(**tool))
+
+
+@api_router.post(
+    "/tools/{tool_name}/test",
+    response_model=SuccessResponse[ToolTestResponse],
+    tags=["tools"],
+)
+async def test_tool(
+    tool_name: str,
+    request: ToolTestRequest,
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> SuccessResponse[ToolTestResponse]:
+    result = await manager.test_tool(
+        tool_name=tool_name,
+        input_params=request.input_params,
+        agent_config=request.agent_config,
+    )
+    return SuccessResponse(data=ToolTestResponse(**result))
+
+
+@api_router.get(
+    "/skills",
+    response_model=SuccessResponse[list[SkillSummaryResponse]],
+    tags=["skills"],
+)
+async def list_skills(
+    manager: Annotated[AgentManager, Depends(get_agent_manager)],
+) -> SuccessResponse[list[SkillSummaryResponse]]:
+    return SuccessResponse(
+        data=[SkillSummaryResponse(**item) for item in manager.list_skills()]
+    )

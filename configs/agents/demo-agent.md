@@ -7,6 +7,8 @@ capabilities:
     - mcp://tools/mock-search@v1
     - mcp://tools/mock-plan@v1
     - mcp://tools/mock-report@v1
+  skills:
+    - demo-skill
   mock_tool_steps: 3
 memory:
   short_term: redis

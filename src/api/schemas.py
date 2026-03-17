@@ -118,3 +118,38 @@ class TaskTraceTaskResponse(BaseModel):
 class TaskTraceResponse(BaseModel):
     task: TaskTraceTaskResponse
     steps: list[TaskTraceStepResponse]
+
+
+class ToolExecutionConfigResponse(BaseModel):
+    timeout_ms: int
+    sandbox: str
+    required_permissions: list[str] = Field(default_factory=list)
+
+
+class ToolDefinitionResponse(BaseModel):
+    name: str
+    version: str
+    description: str
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    execution: ToolExecutionConfigResponse
+
+
+class ToolTestRequest(BaseModel):
+    input_params: dict[str, Any] = Field(default_factory=dict)
+    agent_config: dict[str, Any] | None = None
+
+
+class ToolTestResponse(BaseModel):
+    tool_name: str
+    success: bool
+    output: dict[str, Any] | None = None
+    error: str | None = None
+    latency_ms: int
+
+
+class SkillSummaryResponse(BaseModel):
+    name: str
+    version: str
+    description: str
+    require_tools: list[str] = Field(default_factory=list)
