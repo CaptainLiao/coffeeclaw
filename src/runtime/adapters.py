@@ -4,7 +4,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Protocol, TypedDict, cast
+from typing import Any, Callable, Protocol, TypedDict, cast
 
 from langchain_core.messages import (
     AIMessage,
@@ -174,9 +174,16 @@ class MockModelAdapter:
 
 
 class LiteLLMModelAdapter:
-    def __init__(self, *, model_service: ModelService, default_model: str = "gpt-4o") -> None:
+    def __init__(
+        self,
+        *,
+        model_service: ModelService,
+        default_model: str = "gpt-4o",
+        tool_resolver: Callable[[str], dict[str, Any] | None] | None = None,
+    ) -> None:
         self._model_service = model_service
         self._default_model = default_model
+        self._tool_resolver = tool_resolver
 
     def has_any_key(self) -> bool:
         return self._model_service.has_any_key()
@@ -244,21 +251,37 @@ class LiteLLMModelAdapter:
         return result
 
     def _build_tool_defs(self, available_tools: list[str]) -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "description": f"Execute tool {tool_name}",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": True,
-                    },
-                },
+        tool_defs: list[dict[str, Any]] = []
+        for tool_name in available_tools:
+            tool_config = (
+                self._tool_resolver(tool_name)
+                if self._tool_resolver is not None
+                else None
+            )
+            description = f"Execute tool {tool_name}"
+            parameters: dict[str, Any] = {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
             }
-            for tool_name in available_tools
-        ]
+            if isinstance(tool_config, dict):
+                raw_description = tool_config.get("description")
+                if isinstance(raw_description, str) and raw_description.strip():
+                    description = raw_description.strip()
+                raw_schema = tool_config.get("input_schema")
+                if isinstance(raw_schema, dict) and raw_schema:
+                    parameters = raw_schema
+            tool_defs.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "description": description,
+                        "parameters": parameters,
+                    },
+                }
+            )
+        return tool_defs
 
     def _to_think_result(self, response: ModelResponse) -> ThinkResult:
         tool_calls: list[ToolCall] = []

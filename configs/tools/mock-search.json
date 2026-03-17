@@ -5,17 +5,29 @@
   "input_schema": {
     "type": "object",
     "properties": {
+      "query": {
+        "type": "string",
+        "description": "The search query to execute."
+      },
+      "q": {
+        "type": "string",
+        "description": "Short alias of query."
+      },
       "goal": {
         "type": "string"
       },
-      "step": {
-        "type": "integer"
-      },
       "memory_context": {
         "type": "string"
+      },
+      "filters": {
+        "type": "object"
       }
     },
-    "required": ["goal", "step"],
+    "anyOf": [
+      { "required": ["query"] },
+      { "required": ["q"] },
+      { "required": ["goal"] }
+    ],
     "additionalProperties": true
   },
   "output_schema": {

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import structlog
-from langgraph_supervisor import create_supervisor
 
 from src.orchestrator.registry import AgentRegistry, RoutingDecision
 from src.runtime.lifecycle import AgentConfigParser, AgentManager
 from src.runtime.repository import RuntimeRepository
 
 logger = structlog.get_logger(__name__)
+ENGINE_NAME = "internal_orchestrator"
+ASCII_WORD_RE = re.compile(r"[a-z0-9_]+")
+NON_WORD_RE = re.compile(r"[^a-z0-9_\u4e00-\u9fff]+")
 
 
 @dataclass(frozen=True)
@@ -23,7 +26,7 @@ class DelegationTask:
 
 class IntentRouter:
     def route(self, goal: str, registry: AgentRegistry) -> RoutingDecision:
-        text = goal.lower()
+        text = self._normalize_text(goal)
         scored = self._score_intents(text=text, registry=registry)
 
         if not scored:
@@ -45,7 +48,7 @@ class IntentRouter:
         for rule in registry.list_routing_rules():
             if not rule.keywords:
                 continue
-            score = sum(1 for keyword in rule.keywords if keyword and keyword in text)
+            score = sum(1 for keyword in rule.keywords if self._matches_keyword(text, keyword))
             if score > 0:
                 scored.append((rule.intent, score))
         return scored
@@ -67,6 +70,18 @@ class IntentRouter:
             mode = "multi_agent_consultation"
         return selected_agents, mode
 
+    def _normalize_text(self, text: str) -> str:
+        normalized = NON_WORD_RE.sub(" ", text.lower())
+        return " ".join(normalized.split())
+
+    def _matches_keyword(self, text: str, keyword: str) -> bool:
+        normalized_keyword = self._normalize_text(keyword)
+        if not normalized_keyword:
+            return False
+        if ASCII_WORD_RE.fullmatch(normalized_keyword):
+            return normalized_keyword in text.split()
+        return normalized_keyword in text
+
 
 class SupervisorOrchestrator:
     def __init__(
@@ -83,8 +98,6 @@ class SupervisorOrchestrator:
         self._repository = repository
         self._intent_router = intent_router or IntentRouter()
         self._max_parallel_workers = max(1, max_parallel_workers)
-        self._worker_agent_ids: dict[str, str] = {}
-        self._supervisor_agent_id: str | None = None
         self._graph_info = self.build_supervisor_graph()
 
     async def list_agents(self) -> list[dict[str, Any]]:
@@ -103,7 +116,7 @@ class SupervisorOrchestrator:
 
     async def run(self, *, goal: str, thread_id: str) -> dict[str, Any]:
         await self._repository.ensure_schema()
-        supervisor_id = await self._ensure_supervisor_agent()
+        supervisor_id = await self._create_supervisor_agent()
         task = await self._repository.create_task(
             agent_id=supervisor_id,
             goal=goal,
@@ -123,11 +136,11 @@ class SupervisorOrchestrator:
                     "decision": "delegate",
                     "intent": decision.intent,
                     "mode": decision.mode,
-                    "engine": str(self._graph_info.get("engine", "langgraph-supervisor")),
+                    "engine": str(self._graph_info.get("engine", ENGINE_NAME)),
                     "delegation_tasks": [item.__dict__ for item in delegation_tasks],
                 },
                 result={"status": "delegating"},
-                model_used="langgraph-supervisor",
+                model_used=ENGINE_NAME,
                 trace_meta={
                     "node_role": "supervisor",
                     "orchestrator_task_id": task.id,
@@ -156,7 +169,7 @@ class SupervisorOrchestrator:
                     "summary": self._build_summary(goal, sub_results),
                     "results": sub_results,
                 },
-                model_used="langgraph-supervisor",
+                model_used=ENGINE_NAME,
                 trace_meta={
                     "node_role": "supervisor",
                     "parent_step_id": supervisor_step.id,
@@ -195,7 +208,7 @@ class SupervisorOrchestrator:
                             "message": str(exc),
                         },
                     },
-                    model_used="langgraph-supervisor",
+                    model_used=ENGINE_NAME,
                     trace_meta={
                         "node_role": "supervisor",
                         "orchestrator_task_id": task.id,
@@ -220,26 +233,18 @@ class SupervisorOrchestrator:
             f"可用专家:\n{self._registry.as_prompt_context()}"
         )
         return {
-            "engine": "langgraph-supervisor",
-            "factory": create_supervisor.__name__,
+            "engine": ENGINE_NAME,
             "members": members,
             "prompt": prompt,
         }
 
-    async def _ensure_supervisor_agent(self) -> str:
-        if self._supervisor_agent_id is not None:
-            return self._supervisor_agent_id
-        existing = await self._repository.get_agent_by_name("orchestrator-supervisor")
-        if existing is not None:
-            self._supervisor_agent_id = existing.id
-            return existing.id
+    async def _create_supervisor_agent(self) -> str:
         created = await self._repository.create_agent(
             name="orchestrator-supervisor",
             version="0.1.0",
             config={"type": "orchestrator"},
             status="initialized",
         )
-        self._supervisor_agent_id = created.id
         return created.id
 
     def _build_delegation_tasks(
@@ -304,7 +309,7 @@ class SupervisorOrchestrator:
         error_payload: dict[str, Any] | None = None
 
         try:
-            worker_agent_id = await self._ensure_worker_agent(task.agent_name)
+            worker_agent_id = await self._create_worker_agent(task.agent_name)
             worker_thread = f"{thread_id}:{orchestration_task_id}:{task.agent_name}"
             run_result = await self._agent_manager.run_agent(
                 worker_agent_id,
@@ -343,9 +348,9 @@ class SupervisorOrchestrator:
                 "status": status,
                 "reflection": run_result.get("reflection", ""),
                 "step_count": run_result.get("step_count", 0),
-                "error": error_payload or {},
+                "error": error_payload,
             },
-            model_used="langgraph-supervisor",
+            model_used=ENGINE_NAME,
             trace_meta={
                 "node_role": "worker",
                 "worker_agent": task.agent_name,
@@ -363,11 +368,7 @@ class SupervisorOrchestrator:
             "error": error_payload,
         }
 
-    async def _ensure_worker_agent(self, worker_name: str) -> str:
-        cached = self._worker_agent_ids.get(worker_name)
-        if cached is not None:
-            return cached
-
+    async def _create_worker_agent(self, worker_name: str) -> str:
         entry = self._registry.get_agent(worker_name)
         if entry is None or not entry.config_path:
             raise ValueError(f"Worker agent '{worker_name}' config_path is not configured.")
@@ -375,15 +376,8 @@ class SupervisorOrchestrator:
         config_path = Path(entry.config_path)
         if not config_path.is_absolute():
             config_path = Path.cwd() / config_path
-        parsed_config = AgentConfigParser.parse(str(config_path))
-
-        existing = await self._repository.get_agent_by_name(worker_name)
-        if existing is not None and existing.config == parsed_config.model_dump():
-            self._worker_agent_ids[worker_name] = existing.id
-            return existing.id
-
+        _ = AgentConfigParser.parse(str(config_path))
         created = await self._agent_manager.create_agent(config_path=str(config_path))
-        self._worker_agent_ids[worker_name] = str(created["agent_id"])
         return str(created["agent_id"])
 
     def _build_summary(self, goal: str, sub_results: list[dict[str, Any]]) -> str:

@@ -99,8 +99,6 @@ async def init_resources(settings: Settings) -> AppResources:
         agent_manager=orchestrator_agent_manager,
         repository=runtime_repository,
     )
-    # Fail-fast: ensure langgraph-supervisor dependency is available at startup.
-    orchestrator_manager.build_supervisor_graph()
 
     startup_health = await HealthStatus.build(db_engine=db_engine, redis_client=redis_client)
     return AppResources(

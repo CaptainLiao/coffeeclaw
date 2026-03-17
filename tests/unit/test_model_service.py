@@ -8,6 +8,7 @@ from src.model import ModelService
 from src.model.provider import ModelError, ModelProvider
 from src.model.router import BasicRouter
 from src.model.safety import InputFilter, OutputFilter, SecurityError
+from src.runtime.adapters import LiteLLMModelAdapter
 
 
 class FakeProvider:
@@ -128,3 +129,22 @@ async def test_model_service_returns_tool_calls_and_usage() -> None:
     assert result.tool_calls[0].name == "mock-search"
     assert result.tool_calls[0].arguments["q"] == "beijing"
     assert result.token_usage["total_tokens"] == 15
+
+
+def test_litellm_model_adapter_builds_tool_defs_from_resolver() -> None:
+    adapter = LiteLLMModelAdapter(
+        model_service=cast(ModelService, object()),
+        tool_resolver=lambda name: {
+            "description": f"{name} description",
+            "input_schema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    )
+
+    tool_defs = adapter._build_tool_defs(["mock-search"])
+
+    assert tool_defs[0]["function"]["description"] == "mock-search description"
+    assert tool_defs[0]["function"]["parameters"]["required"] == ["query"]

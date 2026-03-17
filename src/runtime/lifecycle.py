@@ -176,6 +176,7 @@ class AgentManager:
         return LiteLLMModelAdapter(
             model_service=model_service,
             default_model=runtime_settings.default_primary_model,
+            tool_resolver=self._tool_caller.get_tool,
         )
 
     @classmethod

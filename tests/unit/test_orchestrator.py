@@ -52,6 +52,15 @@ def test_intent_router_uses_registry_keywords_and_merges_intents() -> None:
     assert default_decision.selected_agents == ["general-expert"]
 
 
+def test_intent_router_prefers_high_score_matches() -> None:
+    registry = AgentRegistry.from_file("configs/agents/agent-registry.yaml")
+    router = IntentRouter()
+
+    decision = router.route("只查酒店 room 住宿", registry)
+    assert decision.selected_agents == ["hotel-expert"]
+    assert decision.intent == "hotel_*"
+
+
 def test_orchestrator_run_routes_to_multiple_workers() -> None:
     orchestrator, repository = _build_orchestrator()
 
@@ -83,7 +92,7 @@ def test_orchestrator_marks_task_failed_when_worker_initialization_breaks() -> N
     async def broken_worker(_: str) -> str:
         raise ValueError("broken worker config")
 
-    cast(Any, orchestrator)._ensure_worker_agent = broken_worker
+    cast(Any, orchestrator)._create_worker_agent = broken_worker
 
     result = asyncio.run(
         orchestrator.run(

@@ -5,17 +5,30 @@
   "input_schema": {
     "type": "object",
     "properties": {
+      "question": {
+        "type": "string",
+        "description": "The planning question or task to break down."
+      },
       "goal": {
         "type": "string"
       },
       "step": {
         "type": "integer"
       },
+      "need_info": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
       "memory_context": {
         "type": "string"
       }
     },
-    "required": ["goal", "step"],
+    "anyOf": [
+      { "required": ["question"] },
+      { "required": ["goal", "step"] }
+    ],
     "additionalProperties": true
   },
   "output_schema": {

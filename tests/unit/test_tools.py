@@ -60,6 +60,30 @@ def test_tool_caller_rejects_blocked_action() -> None:
     assert "blocked by policy" in result.error
 
 
+def test_tool_caller_accepts_mock_search_query_payload() -> None:
+    caller = ToolCaller(registry=_build_registry(), executor_factory=ToolExecutorFactory())
+    result = asyncio.run(
+        caller.call(
+            tool_name="mock-search",
+            input_params={"query": "北京天气"},
+            agent_config={"policy": {"blocked_actions": []}},
+        )
+    )
+    assert result.success is True
+
+
+def test_tool_caller_accepts_mock_plan_question_payload() -> None:
+    caller = ToolCaller(registry=_build_registry(), executor_factory=ToolExecutorFactory())
+    result = asyncio.run(
+        caller.call(
+            tool_name="mock-plan",
+            input_params={"question": "帮我规划出行", "need_info": ["出发地", "日期"]},
+            agent_config={"policy": {"blocked_actions": []}},
+        )
+    )
+    assert result.success is True
+
+
 def test_skill_manager_injects_prompt() -> None:
     manager = SkillManager()
     manager.load_from_dir("configs/skills")

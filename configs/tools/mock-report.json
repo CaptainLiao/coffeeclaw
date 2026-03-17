@@ -5,6 +5,13 @@
   "input_schema": {
     "type": "object",
     "properties": {
+      "content": {
+        "type": "string",
+        "description": "The content to summarize or report."
+      },
+      "summary": {
+        "type": "string"
+      },
       "goal": {
         "type": "string"
       },
@@ -15,7 +22,11 @@
         "type": "string"
       }
     },
-    "required": ["goal", "step"],
+    "anyOf": [
+      { "required": ["content"] },
+      { "required": ["summary"] },
+      { "required": ["goal", "step"] }
+    ],
     "additionalProperties": true
   },
   "output_schema": {
