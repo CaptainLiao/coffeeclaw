@@ -13,7 +13,7 @@
 
 ## 任务列表
 
-### 1. Postgres 插件与表结构（`deploy/docker/init.sql` & Migration）
+### 1. Postgres 插件与表结构（Alembic Migration）
 - [ ] 确保 Docker 提供的 Postgres 镜像集成了 `pgvector`
 - [ ] 在数据库初始化启用扩展：
   ```sql

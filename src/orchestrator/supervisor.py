@@ -115,7 +115,6 @@ class SupervisorOrchestrator:
         return output
 
     async def run(self, *, goal: str, thread_id: str) -> dict[str, Any]:
-        await self._repository.ensure_schema()
         supervisor_id = await self._create_supervisor_agent()
         task = await self._repository.create_task(
             agent_id=supervisor_id,

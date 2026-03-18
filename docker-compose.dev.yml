@@ -1,0 +1,12 @@
+services:
+  migrate:
+    build:
+      target: dev
+    volumes:
+      - .:/app
+
+  app:
+    build:
+      target: dev
+    volumes:
+      - .:/app

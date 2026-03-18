@@ -58,6 +58,49 @@ async def test_basic_router_fallback_on_primary_failure() -> None:
     assert provider.calls == ["gpt-4o", "gpt-4o-mini"]
 
 
+@pytest.mark.asyncio
+async def test_basic_router_does_not_fallback_on_rate_limit() -> None:
+    provider = FakeProvider(
+        responses=[
+            ModelError(provider="openai", status_code=429, message="rate limited"),
+        ]
+    )
+    router = BasicRouter(
+        provider=cast(ModelProvider, provider),
+        primary="gpt-4o",
+        fallback="gpt-4o-mini",
+    )
+
+    with pytest.raises(ModelError, match="rate limited"):
+        await router.call(messages=[{"role": "user", "content": "hi"}], tools=[])
+
+    assert provider.calls == ["gpt-4o"]
+
+
+@pytest.mark.asyncio
+async def test_basic_router_keeps_primary_context_when_fallback_fails() -> None:
+    provider = FakeProvider(
+        responses=[
+            ModelError(provider="openai", status_code=503, message="primary unavailable"),
+            ModelError(provider="openai", status_code=500, message="fallback unavailable"),
+        ]
+    )
+    router = BasicRouter(
+        provider=cast(ModelProvider, provider),
+        primary="gpt-4o",
+        fallback="gpt-4o-mini",
+    )
+
+    with pytest.raises(ModelError) as exc_info:
+        await router.call(messages=[{"role": "user", "content": "hi"}], tools=[])
+
+    assert provider.calls == ["gpt-4o", "gpt-4o-mini"]
+    assert "Primary model gpt-4o failed" in exc_info.value.message
+    assert "primary unavailable" in exc_info.value.message
+    assert "fallback model gpt-4o-mini failed" in exc_info.value.message
+    assert "fallback unavailable" in exc_info.value.message
+
+
 def test_input_filter_redacts_sensitive_text() -> None:
     filtered = InputFilter().check(
         [

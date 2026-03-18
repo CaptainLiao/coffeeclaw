@@ -20,7 +20,12 @@ FROM base AS dev
 
 RUN uv sync --frozen --no-install-project --extra dev
 
+COPY alembic.ini ./
+COPY configs/ ./configs/
+COPY migrations/ ./migrations/
 COPY src/ ./src/
+
+ENV WATCHFILES_FORCE_POLLING=true
 
 EXPOSE 8000
 
@@ -29,6 +34,9 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload
 # =========== Prod Stage ===========
 FROM base AS prod
 
+COPY alembic.ini ./
+COPY configs/ ./configs/
+COPY migrations/ ./migrations/
 COPY src/ ./src/
 
 EXPOSE 8000

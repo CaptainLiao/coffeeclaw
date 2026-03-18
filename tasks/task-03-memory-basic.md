@@ -50,7 +50,7 @@ Long-term Memory（pgvector 向量检索）在 Phase 2 Task 08 中实现。
   - `persist_tool_log(step_id, log_data)` — 持久化工具日志
 
 ### 6. 数据库迁移脚本
-- [x] 在 `deploy/docker/init.sql` 中补全 PRD 2.4.3 节所有表的 DDL（含索引）：
+- [x] 在 Alembic 初始迁移中补全 PRD 2.4.3 节所有表的 DDL（含索引）：
   - `agents` 表：在 `status`、`created_at` 字段建索引
   - `tasks` 表：在 `agent_id`、`status` 字段建索引
   - `task_steps` 表：在 `task_id`、`step_index` 建联合索引

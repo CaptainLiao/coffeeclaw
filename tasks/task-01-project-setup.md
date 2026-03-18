@@ -37,8 +37,6 @@ CoffeeClaw 是企业级 AI Agent 开发平台，v1 采用 Python + FastAPI + Lan
   ├── tests/
   │   ├── unit/
   │   └── integration/
-  ├── deploy/
-  │   └── docker/
   └── docs/
   ```
 - [x] 在所有 Python 包目录下创建 `__init__.py`
@@ -116,18 +114,23 @@ CoffeeClaw 是企业级 AI Agent 开发平台，v1 采用 Python + FastAPI + Lan
 
 ### 4. Docker 本地开发环境
 - [x] 创建 `docker-compose.yml`（项目根目录），包含：
-  - **postgres**：PostgreSQL 16，挂载 `./deploy/docker/init.sql` 初始化数据库 Schema
+  - **postgres**：PostgreSQL 16
   - **redis**：Redis 7.0 Alpine，开启 AOF 持久化
-  - **app**：CoffeeClaw 本体（开发模式，挂载代码目录，热重载）
+  - **migrate**：Alembic one-shot 迁移服务
+  - **app**：CoffeeClaw 本体
+- [x] 创建 `docker-compose.dev.yml`：
+  - 本地开发覆盖层
+  - 挂载代码目录
+  - 使用 `dev` 镜像目标与容器内热重载
 - [x] 创建 `Dockerfile`（多阶段构建）：
   - `base`：Python 3.11 slim + 依赖安装
   - `dev`：挂载源码，使用 `uvicorn --reload`
   - `prod`：最小镜像（后续 Phase 3 使用）
-- [x] 创建 `deploy/docker/init.sql`，包含 PRD 2.4.3 节定义的核心表：
-  - `agents`（Agent 实例表）
-  - `tasks`（任务表）
-  - `task_steps`（执行步骤表）
-  - `tool_logs`（工具调用审计日志）
+- [x] 创建 Alembic 迁移链路：
+  - `alembic.ini`
+  - `migrations/env.py`
+  - `migrations/versions/0001_runtime_schema.py`
+  - 统一管理核心表与 checkpoint schema
 
 ### 5. 代码质量与 CI 配置
 - [x] 创建 `ruff.toml`（或 `pyproject.toml` 中 `[tool.ruff]` 节），配置 lint 规则
@@ -145,8 +148,8 @@ CoffeeClaw 是企业级 AI Agent 开发平台，v1 采用 Python + FastAPI + Lan
 ---
 
 ## 验收标准
-- [x] `docker compose up -d` 一键启动，无报错
-- [x] `GET http://localhost:8000/health` 返回 `{"status": "ok", "db": true, "redis": true}`
+- [x] `python .\scripts\docker.py prod` 一键启动，无报错
+- [x] `GET http://localhost:8000/health` 返回 `{"code":1,"data":{"status":"ok","db":true,"redis":true}}`
 - [x] `GET http://localhost:8000/docs` 可打开 Swagger UI
 - [x] `pytest tests/` 通过所有初始测试（至少包含健康检查路由测试）
 - [x] `ruff check src/` 无 lint 错误

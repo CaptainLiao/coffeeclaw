@@ -8,7 +8,7 @@ from src.model.provider import ModelError, ModelProvider
 
 logger = structlog.get_logger(__name__)
 
-FALLBACK_STATUS_CODES = {429, 500, 502, 503, 504}
+FALLBACK_STATUS_CODES = {500, 502, 503, 504}
 
 
 class BasicRouter:
@@ -41,9 +41,39 @@ class BasicRouter:
                 status_code=exc.status_code,
                 message=exc.message,
             )
-            return await self._provider.async_completion(
-                messages=messages,
-                model=self._fallback,
-                tools=tools,
-                **kwargs,
-            )
+            try:
+                return await self._provider.async_completion(
+                    messages=messages,
+                    model=self._fallback,
+                    tools=tools,
+                    **kwargs,
+                )
+            except ModelError as fallback_exc:
+                logger.error(
+                    "Fallback model also failed",
+                    primary=self._primary,
+                    fallback=self._fallback,
+                    primary_status_code=exc.status_code,
+                    fallback_status_code=fallback_exc.status_code,
+                )
+                raise self._compose_fallback_error(
+                    primary_error=exc,
+                    fallback_error=fallback_exc,
+                ) from fallback_exc
+
+    def _compose_fallback_error(
+        self,
+        *,
+        primary_error: ModelError,
+        fallback_error: ModelError,
+    ) -> ModelError:
+        return ModelError(
+            provider=fallback_error.provider,
+            status_code=fallback_error.status_code,
+            message=(
+                f"Primary model {self._primary} failed with "
+                f"{primary_error.provider}({primary_error.status_code}): {primary_error.message}; "
+                f"fallback model {self._fallback} failed with "
+                f"{fallback_error.provider}({fallback_error.status_code}): {fallback_error.message}"
+            ),
+        )

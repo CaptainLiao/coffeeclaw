@@ -227,8 +227,6 @@ class AgentManager:
         config_path: str | None = None,
         inline_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        await self._repository.ensure_schema()
-
         if config_path is not None:
             agent_config = AgentConfigParser.parse(
                 config_path,
@@ -255,7 +253,6 @@ class AgentManager:
         return {"agent_id": agent.id, "status": agent.status}
 
     async def initialize_agent(self, agent_id: str) -> dict[str, Any]:
-        await self._repository.ensure_schema()
         agent = await self._repository.get_agent(agent_id)
         if agent is None:
             raise ValueError(f"Agent {agent_id} not found.")

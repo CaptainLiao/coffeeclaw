@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -80,10 +81,69 @@ class TaskTraceRecord:
     steps: list[TaskTraceStep]
 
 
-class RuntimeRepository:
-    async def ensure_schema(self) -> None:
-        raise NotImplementedError
+def _to_agent_record(row: Any) -> AgentRecord:
+    return AgentRecord(
+        id=str(row["id"]),
+        name=str(row["name"]),
+        version=str(row["version"]),
+        config=dict(row["config"]),
+        status=str(row["status"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
 
+
+def _to_task_record(row: Any) -> TaskRecord:
+    return TaskRecord(
+        id=str(row["id"]),
+        agent_id=str(row["agent_id"]),
+        goal=str(row["goal"]),
+        thread_id=str(row["thread_id"]),
+        status=str(row["status"]),
+        current_step=int(row["current_step"]),
+        dag=dict(row["dag"]),
+        created_at=row["created_at"],
+        completed_at=row["completed_at"],
+    )
+
+
+def _to_task_step_record(row: Any) -> TaskStepRecord:
+    return TaskStepRecord(
+        id=str(row["id"]),
+        task_id=str(row["task_id"]),
+        step_index=int(row["step_index"]),
+        action_type=str(row["action_type"]),
+        plan=dict(row["plan"]),
+        result=dict(row["result"]),
+        model_used=str(row["model_used"]),
+        token_usage=dict(row["token_usage"] or {}),
+        trace_meta=dict(row["trace_meta"] or {}),
+        created_at=row["created_at"],
+    )
+
+
+def _to_tool_log_record(row: Any) -> ToolLogRecord:
+    return ToolLogRecord(
+        id=str(row["id"]),
+        task_step_id=str(row["task_step_id"]),
+        tool_name=str(row["tool_name"]),
+        input_params=dict(row["input_params"]),
+        output_result=dict(row["output_result"]),
+        latency_ms=int(row["latency_ms"]),
+        success=bool(row["success"]),
+        error_message=row["error_message"],
+        created_at=row["created_at"],
+    )
+
+
+def _ensure_updated(rowcount: int | None, *, entity_name: str, entity_id: str) -> None:
+    if rowcount == 0:
+        raise ValueError(f"{entity_name} {entity_id} not found.")
+
+
+class RuntimeRepository(ABC):
+
+    @abstractmethod
     async def create_agent(
         self,
         *,
@@ -94,18 +154,23 @@ class RuntimeRepository:
     ) -> AgentRecord:
         raise NotImplementedError
 
+    @abstractmethod
     async def update_agent_status(self, agent_id: str, status: str) -> None:
         raise NotImplementedError
 
+    @abstractmethod
     async def get_agent(self, agent_id: str) -> AgentRecord | None:
         raise NotImplementedError
 
+    @abstractmethod
     async def get_agent_by_name(self, name: str) -> AgentRecord | None:
         raise NotImplementedError
 
+    @abstractmethod
     async def create_task(self, *, agent_id: str, goal: str, thread_id: str, status: str) -> TaskRecord:
         raise NotImplementedError
 
+    @abstractmethod
     async def update_task_status(
         self,
         task_id: str,
@@ -116,18 +181,23 @@ class RuntimeRepository:
     ) -> None:
         raise NotImplementedError
 
+    @abstractmethod
     async def get_task(self, task_id: str) -> TaskRecord | None:
         raise NotImplementedError
 
+    @abstractmethod
     async def get_task_by_thread(self, agent_id: str, thread_id: str) -> TaskRecord | None:
         raise NotImplementedError
 
+    @abstractmethod
     async def get_resumable_task(self, agent_id: str, thread_id: str) -> TaskRecord | None:
         raise NotImplementedError
 
+    @abstractmethod
     async def get_latest_task(self, agent_id: str) -> TaskRecord | None:
         raise NotImplementedError
 
+    @abstractmethod
     async def create_task_step(
         self,
         *,
@@ -142,9 +212,11 @@ class RuntimeRepository:
     ) -> TaskStepRecord:
         raise NotImplementedError
 
+    @abstractmethod
     async def get_latest_task_step(self, task_id: str) -> TaskStepRecord | None:
         raise NotImplementedError
 
+    @abstractmethod
     async def create_tool_log(
         self,
         *,
@@ -158,9 +230,11 @@ class RuntimeRepository:
     ) -> ToolLogRecord:
         raise NotImplementedError
 
+    @abstractmethod
     async def list_tool_logs(self, task_id: str) -> list[ToolLogRecord]:
         raise NotImplementedError
 
+    @abstractmethod
     async def get_task_trace(self, task_id: str) -> TaskTraceRecord | None:
         raise NotImplementedError
 
@@ -168,77 +242,6 @@ class RuntimeRepository:
 class SqlRuntimeRepository(RuntimeRepository):
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
-
-    async def ensure_schema(self) -> None:
-        statements = [
-            """
-            CREATE TABLE IF NOT EXISTS agents (
-                id UUID PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
-                version VARCHAR(50),
-                config JSONB,
-                status VARCHAR(20),
-                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                id UUID PRIMARY KEY,
-                agent_id UUID REFERENCES agents(id),
-                goal TEXT,
-                thread_id VARCHAR(255),
-                status VARCHAR(20),
-                dag JSONB,
-                current_step INT,
-                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                completed_at TIMESTAMPTZ
-            )
-            """,
-            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS thread_id VARCHAR(255)",
-            """
-            CREATE TABLE IF NOT EXISTS task_steps (
-                id UUID PRIMARY KEY,
-                task_id UUID REFERENCES tasks(id),
-                step_index INT,
-                action_type VARCHAR(20),
-                plan JSONB,
-                result JSONB,
-                latency_ms INT,
-                model_used VARCHAR(100),
-                token_usage JSONB,
-                trace_meta JSONB,
-                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            "ALTER TABLE task_steps ADD COLUMN IF NOT EXISTS trace_meta JSONB",
-            """
-            CREATE TABLE IF NOT EXISTS tool_logs (
-                id UUID PRIMARY KEY,
-                task_step_id UUID REFERENCES task_steps(id),
-                tool_name VARCHAR(255),
-                input_params JSONB,
-                output_result JSONB,
-                sandbox_type VARCHAR(20),
-                permissions_used TEXT[],
-                latency_ms INT,
-                success BOOLEAN,
-                error_message TEXT,
-                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            "CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status)",
-            "CREATE INDEX IF NOT EXISTS idx_agents_created_at ON agents(created_at)",
-            "CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id)",
-            "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)",
-            "CREATE INDEX IF NOT EXISTS idx_task_steps_task_step ON task_steps(task_id, step_index)",
-            "CREATE INDEX IF NOT EXISTS idx_tool_logs_task_step_id ON tool_logs(task_step_id)",
-            "CREATE INDEX IF NOT EXISTS idx_tool_logs_tool_name ON tool_logs(tool_name)",
-            "CREATE INDEX IF NOT EXISTS idx_tool_logs_success ON tool_logs(success)",
-        ]
-        async with self._engine.begin() as connection:
-            for statement in statements:
-                await connection.execute(text(statement))
 
     async def create_agent(
         self,
@@ -276,8 +279,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 text("UPDATE agents SET status = :status, updated_at = CURRENT_TIMESTAMP WHERE id = :id"),
                 {"id": agent_id, "status": status},
             )
-        if result.rowcount == 0:
-            raise ValueError(f"Agent {agent_id} not found.")
+        _ensure_updated(result.rowcount, entity_name="Agent", entity_id=agent_id)
 
     async def get_agent(self, agent_id: str) -> AgentRecord | None:
         async with self._engine.connect() as connection:
@@ -292,17 +294,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 {"id": agent_id},
             )
             row = result.mappings().first()
-        if row is None:
-            return None
-        return AgentRecord(
-            id=str(row["id"]),
-            name=str(row["name"]),
-            version=str(row["version"]),
-            config=dict(row["config"]),
-            status=str(row["status"]),
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        return _to_agent_record(row) if row is not None else None
 
     async def get_agent_by_name(self, name: str) -> AgentRecord | None:
         async with self._engine.connect() as connection:
@@ -319,17 +311,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 {"name": name},
             )
             row = result.mappings().first()
-        if row is None:
-            return None
-        return AgentRecord(
-            id=str(row["id"]),
-            name=str(row["name"]),
-            version=str(row["version"]),
-            config=dict(row["config"]),
-            status=str(row["status"]),
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        return _to_agent_record(row) if row is not None else None
 
     async def create_task(self, *, agent_id: str, goal: str, thread_id: str, status: str) -> TaskRecord:
         task_id = str(uuid.uuid4())
@@ -365,7 +347,7 @@ class SqlRuntimeRepository(RuntimeRepository):
         completed: bool = False,
     ) -> None:
         async with self._engine.begin() as connection:
-            await connection.execute(
+            result = await connection.execute(
                 text(
                     """
                     UPDATE tasks
@@ -382,6 +364,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                     "completed": completed,
                 },
             )
+        _ensure_updated(result.rowcount, entity_name="Task", entity_id=task_id)
 
     async def get_task(self, task_id: str) -> TaskRecord | None:
         async with self._engine.connect() as connection:
@@ -396,19 +379,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 {"id": task_id},
             )
             row = result.mappings().first()
-        if row is None:
-            return None
-        return TaskRecord(
-            id=str(row["id"]),
-            agent_id=str(row["agent_id"]),
-            goal=str(row["goal"]),
-            thread_id=str(row["thread_id"]),
-            status=str(row["status"]),
-            current_step=int(row["current_step"]),
-            dag=dict(row["dag"]),
-            created_at=row["created_at"],
-            completed_at=row["completed_at"],
-        )
+        return _to_task_record(row) if row is not None else None
 
     async def get_task_by_thread(self, agent_id: str, thread_id: str) -> TaskRecord | None:
         async with self._engine.connect() as connection:
@@ -425,19 +396,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 {"agent_id": agent_id, "thread_id": thread_id},
             )
             row = result.mappings().first()
-        if row is None:
-            return None
-        return TaskRecord(
-            id=str(row["id"]),
-            agent_id=str(row["agent_id"]),
-            goal=str(row["goal"]),
-            thread_id=str(row["thread_id"]),
-            status=str(row["status"]),
-            current_step=int(row["current_step"]),
-            dag=dict(row["dag"]),
-            created_at=row["created_at"],
-            completed_at=row["completed_at"],
-        )
+        return _to_task_record(row) if row is not None else None
 
     async def get_resumable_task(self, agent_id: str, thread_id: str) -> TaskRecord | None:
         async with self._engine.connect() as connection:
@@ -456,19 +415,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 {"agent_id": agent_id, "thread_id": thread_id},
             )
             row = result.mappings().first()
-        if row is None:
-            return None
-        return TaskRecord(
-            id=str(row["id"]),
-            agent_id=str(row["agent_id"]),
-            goal=str(row["goal"]),
-            thread_id=str(row["thread_id"]),
-            status=str(row["status"]),
-            current_step=int(row["current_step"]),
-            dag=dict(row["dag"]),
-            created_at=row["created_at"],
-            completed_at=row["completed_at"],
-        )
+        return _to_task_record(row) if row is not None else None
 
     async def get_latest_task(self, agent_id: str) -> TaskRecord | None:
         async with self._engine.connect() as connection:
@@ -485,19 +432,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 {"agent_id": agent_id},
             )
             row = result.mappings().first()
-        if row is None:
-            return None
-        return TaskRecord(
-            id=str(row["id"]),
-            agent_id=str(row["agent_id"]),
-            goal=str(row["goal"]),
-            thread_id=str(row["thread_id"]),
-            status=str(row["status"]),
-            current_step=int(row["current_step"]),
-            dag=dict(row["dag"]),
-            created_at=row["created_at"],
-            completed_at=row["completed_at"],
-        )
+        return _to_task_record(row) if row is not None else None
 
     async def create_task_step(
         self,
@@ -567,20 +502,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 {"task_id": task_id},
             )
             row = result.mappings().first()
-        if row is None:
-            return None
-        return TaskStepRecord(
-            id=str(row["id"]),
-            task_id=str(row["task_id"]),
-            step_index=int(row["step_index"]),
-            action_type=str(row["action_type"]),
-            plan=dict(row["plan"]),
-            result=dict(row["result"]),
-            model_used=str(row["model_used"]),
-            token_usage=dict(row["token_usage"] or {}),
-            trace_meta=dict(row["trace_meta"] or {}),
-            created_at=row["created_at"],
-        )
+        return _to_task_step_record(row) if row is not None else None
 
     async def create_tool_log(
         self,
@@ -641,20 +563,7 @@ class SqlRuntimeRepository(RuntimeRepository):
                 {"task_id": task_id},
             )
             rows = result.mappings().all()
-        return [
-            ToolLogRecord(
-                id=str(row["id"]),
-                task_step_id=str(row["task_step_id"]),
-                tool_name=str(row["tool_name"]),
-                input_params=dict(row["input_params"]),
-                output_result=dict(row["output_result"]),
-                latency_ms=int(row["latency_ms"]),
-                success=bool(row["success"]),
-                error_message=row["error_message"],
-                created_at=row["created_at"],
-            )
-            for row in rows
-        ]
+        return [_to_tool_log_record(row) for row in rows]
 
     async def get_task_trace(self, task_id: str) -> TaskTraceRecord | None:
         task = await self.get_task(task_id)
@@ -693,34 +602,11 @@ class SqlRuntimeRepository(RuntimeRepository):
         logs_by_step: dict[str, list[ToolLogRecord]] = defaultdict(list)
         for row in log_rows:
             step_id = str(row["task_step_id"])
-            logs_by_step[step_id].append(
-                ToolLogRecord(
-                    id=str(row["id"]),
-                    task_step_id=step_id,
-                    tool_name=str(row["tool_name"]),
-                    input_params=dict(row["input_params"]),
-                    output_result=dict(row["output_result"]),
-                    latency_ms=int(row["latency_ms"]),
-                    success=bool(row["success"]),
-                    error_message=row["error_message"],
-                    created_at=row["created_at"],
-                )
-            )
+            logs_by_step[step_id].append(_to_tool_log_record(row))
 
         steps: list[TaskTraceStep] = []
         for row in step_rows:
-            step = TaskStepRecord(
-                id=str(row["id"]),
-                task_id=str(row["task_id"]),
-                step_index=int(row["step_index"]),
-                action_type=str(row["action_type"]),
-                plan=dict(row["plan"]),
-                result=dict(row["result"]),
-                model_used=str(row["model_used"]),
-                token_usage=dict(row["token_usage"] or {}),
-                trace_meta=dict(row["trace_meta"] or {}),
-                created_at=row["created_at"],
-            )
+            step = _to_task_step_record(row)
             steps.append(TaskTraceStep(step=step, tool_logs=logs_by_step.get(step.id, [])))
 
         return TaskTraceRecord(task=task, steps=steps)
@@ -732,9 +618,7 @@ class InMemoryRuntimeRepository(RuntimeRepository):
         self.tasks: dict[str, TaskRecord] = {}
         self.task_steps: dict[str, list[TaskStepRecord]] = defaultdict(list)
         self.tool_logs: dict[str, list[ToolLogRecord]] = defaultdict(list)
-
-    async def ensure_schema(self) -> None:
-        return None
+        self._step_task_index: dict[str, str] = {}
 
     async def create_agent(
         self,
@@ -776,7 +660,9 @@ class InMemoryRuntimeRepository(RuntimeRepository):
         current_step: int,
         completed: bool = False,
     ) -> None:
-        task = self.tasks[task_id]
+        task = self.tasks.get(task_id)
+        if task is None:
+            raise ValueError(f"Task {task_id} not found.")
         task.status = status
         task.current_step = current_step
         if completed:
@@ -831,6 +717,7 @@ class InMemoryRuntimeRepository(RuntimeRepository):
             utcnow(),
         )
         self.task_steps[task_id].append(step)
+        self._step_task_index[step.id] = task_id
         return step
 
     async def get_latest_task_step(self, task_id: str) -> TaskStepRecord | None:
@@ -859,11 +746,9 @@ class InMemoryRuntimeRepository(RuntimeRepository):
             error_message,
             utcnow(),
         )
-        task_id = ""
-        for candidate_task_id, steps in self.task_steps.items():
-            if any(step.id == task_step_id for step in steps):
-                task_id = candidate_task_id
-                break
+        task_id = self._step_task_index.get(task_step_id)
+        if task_id is None:
+            raise ValueError(f"Task step {task_step_id} not found.")
         self.tool_logs[task_id].append(log)
         return log
 

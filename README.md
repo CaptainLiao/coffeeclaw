@@ -67,7 +67,18 @@ CoffeeClaw 是一个基于 FastAPI、LangGraph、Postgres 和 Redis 的 Agent �
 - configs\agents 配置里如果不写 `model`，自动使用 `DEFAULT_PRIMARY_MODEL` / `DEFAULT_FALLBACK_MODEL`
 - 这样切换模型时通常只需要改 `.env.local`，不需要改每个 agent 文件
 
+默认的 `docker-compose.yml` 是更干净的运行态配置：
+
+- 使用 `prod` 镜像目标
+- 不挂载源码目录
+- 不启用容器内热重载
+
+本地开发如果需要挂载源码和 `--reload`，请叠加 `docker-compose.dev.yml`。
+
 默认的 Docker Compose 启动方式下，Postgres 和 Redis 都运行在容器中，应用容器会自动连接它们。
+数据库表结构不再由应用启动时自动创建，而是由 Alembic 迁移统一管理。
+`docker-compose.yml` 会通过 `env_file` 读取 `.env` / `.env.local`，因此模型和应用配置会直接沿用你的本地文件。
+只有 `SQL_DSN` 和 `REDIS_URL` 会在 Compose 中覆盖成容器内地址，因为容器里不能使用 `localhost` 访问 `postgres` / `redis` 服务。
 
 如需后续切换存储后端，可直接改环境变量：
 
@@ -96,35 +107,48 @@ uv sync --extra dev
 
 ## 使用 Docker 启动
 
-首次启动或修改依赖/镜像配置后：
+运行态启动：
 
 ```powershell
-docker compose up -d --build
+python .\scripts\docker.py prod
 ```
 
-日常启动（不改依赖时）：
+该命令会先运行一次 `migrate` 服务执行 `alembic upgrade head`，迁移成功后 `app` 才会启动。
+
+开发态启动（挂载源码 + 容器内热重载）：
 
 ```powershell
-docker compose up -d
+python .\scripts\docker.py dev
+```
+
+停止服务：
+
+```powershell
+python .\scripts\docker.py down
 ```
 
 查看容器状态：
 
 ```powershell
-docker compose ps
+python .\scripts\docker.py ps
+```
+
+查看日志：
+
+```powershell
+python .\scripts\docker.py logs app --tail 120
 ```
 
 预期结果：
 
+- `migrate` 状态为 `Exited (0)`
 - `app` 状态为 `Up`
 - `postgres` 状态为 `Up` 且 `healthy`
 - `redis` 状态为 `Up` 且 `healthy`
 
-## 停止服务
+说明：
 
-```powershell
-docker compose down
-```
+- Docker 开发容器已启用 `WATCHFILES_FORCE_POLLING=true`，避免 Windows 绑定挂载下 `--reload` 的文件监听抖动。
 
 ## 启动后验证
 
@@ -137,7 +161,7 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8000/health | Select-Object 
 预期返回：
 
 ```json
-{"status":"ok","db":true,"redis":true}
+{"code":1,"data":{"status":"ok","db":true,"redis":true}}
 ```
 
 打开 Swagger 文档：
@@ -177,6 +201,12 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8000/api/v1/tools | Select-O
 
 ```powershell
 uv sync --extra dev
+```
+
+首次启动新库或清空数据库后，先执行迁移：
+
+```powershell
+uv run alembic upgrade head
 ```
 
 启动 API：
