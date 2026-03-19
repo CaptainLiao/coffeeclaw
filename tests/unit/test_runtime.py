@@ -1,5 +1,8 @@
+import asyncio
+import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,10 +14,32 @@ from src.runtime.adapters import MockModelAdapter
 from src.runtime.checkpoint import RuntimeCheckpointer
 from src.runtime.lifecycle import AgentConfigParser, AgentManager
 from src.runtime.nodes import RuntimeNodeServices
-from src.runtime.repository import InMemoryRuntimeRepository
+from src.runtime.repository import InMemoryRuntimeRepository, TaskRecord
 from src.services import health as health_service
 
 CONFIG_PATH = Path("configs/agents/demo-agent.md")
+
+
+class SlowMockModelAdapter(MockModelAdapter):
+    async def summarize_reflection(self, state: dict[str, object]) -> str:
+        await asyncio.sleep(0.05)
+        return await super().summarize_reflection(state)
+
+
+async def wait_for_task_status(
+    repository: InMemoryRuntimeRepository,
+    task_id: str,
+    expected_status: str,
+    *,
+    timeout_seconds: float = 2.0,
+) -> TaskRecord:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        task = await repository.get_task(task_id)
+        if task is not None and task.status == expected_status:
+            return task
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"Task {task_id} did not reach status {expected_status}.")
 
 
 async def always_healthy(_: object) -> bool:
@@ -237,6 +262,143 @@ async def test_pause_agent_sets_task_paused_and_run_requires_resume() -> None:
 
 
 @pytest.mark.asyncio
+async def test_background_run_can_pause_and_resume_in_real_time() -> None:
+    repository = InMemoryRuntimeRepository()
+    manager = AgentManager.for_tests(repository=repository)
+    try:
+        created = await manager.create_agent(config_path=str(CONFIG_PATH))
+
+        manager._services = RuntimeNodeServices(
+            memory=manager._services.memory,
+            model=SlowMockModelAdapter(),
+            tools=manager._services.tools,
+            repository=repository,
+        )
+
+        started = await manager.start_agent_run(
+            created["agent_id"],
+            goal="background pause flow",
+            thread_id="thread-background-pause",
+        )
+        assert started["status"] == "running"
+
+        pause_result = await manager.pause_agent(
+            created["agent_id"],
+            thread_id="thread-background-pause",
+        )
+        assert pause_result["status"] == "pausing"
+
+        paused_task = await wait_for_task_status(repository, started["task_id"], "paused")
+        paused_step = paused_task.current_step
+        assert paused_step >= 1
+
+        resumed = await manager.start_agent_resume(
+            created["agent_id"],
+            thread_id="thread-background-pause",
+        )
+        assert resumed["status"] == "running"
+
+        completed_task = await wait_for_task_status(repository, started["task_id"], "completed")
+        assert completed_task.current_step > paused_step
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_pause_agent_reports_completed_when_pause_request_loses_race(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = InMemoryRuntimeRepository()
+    manager = AgentManager.for_tests(repository=repository)
+    created = await manager.create_agent(config_path=str(CONFIG_PATH))
+    task = await repository.create_task(
+        agent_id=created["agent_id"],
+        goal="race",
+        thread_id="thread-race",
+        status="running",
+    )
+
+    dummy_background = asyncio.create_task(asyncio.sleep(0.05))
+    manager._background_tasks[task.id] = dummy_background
+
+    async def fake_request_task_pause(task_id: str) -> bool:
+        await repository.update_task_status(
+            task_id,
+            status="completed",
+            current_step=1,
+            completed=True,
+        )
+        return False
+
+    monkeypatch.setattr(repository, "request_task_pause", fake_request_task_pause)
+
+    try:
+        with pytest.raises(ValueError, match="status 'completed'"):
+            await manager.pause_agent(created["agent_id"], thread_id="thread-race")
+    finally:
+        dummy_background.cancel()
+        await asyncio.gather(dummy_background, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_background_run_rejects_concurrent_active_task_for_same_agent() -> None:
+    repository = InMemoryRuntimeRepository()
+    manager = AgentManager.for_tests(repository=repository)
+    try:
+        created = await manager.create_agent(config_path=str(CONFIG_PATH))
+
+        manager._services = RuntimeNodeServices(
+            memory=manager._services.memory,
+            model=SlowMockModelAdapter(),
+            tools=manager._services.tools,
+            repository=repository,
+        )
+
+        started = await manager.start_agent_run(
+            created["agent_id"],
+            goal="first background task",
+            thread_id="thread-concurrent-a",
+        )
+        assert started["status"] == "running"
+
+        with pytest.raises(ValueError, match="already has active task"):
+            await manager.start_agent_run(
+                created["agent_id"],
+                goal="second background task",
+                thread_id="thread-concurrent-b",
+            )
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_recover_interrupted_tasks_marks_running_tasks_failed_with_error_step() -> None:
+    repository = InMemoryRuntimeRepository()
+    manager = AgentManager.for_tests(repository=repository)
+    created = await manager.create_agent(config_path=str(CONFIG_PATH))
+    task = await repository.create_task(
+        agent_id=created["agent_id"],
+        goal="interrupted",
+        thread_id="thread-interrupted",
+        status="running",
+    )
+    await repository.update_agent_status(created["agent_id"], "running")
+
+    recovered_count = await manager.recover_interrupted_tasks()
+
+    assert recovered_count == 1
+    recovered_task = await repository.get_task(task.id)
+    assert recovered_task is not None
+    assert recovered_task.status == "failed"
+    assert recovered_task.completed_at is not None
+
+    trace = await repository.get_task_trace(task.id)
+    assert trace is not None
+    assert trace.steps[-1].step.action_type == "error"
+    assert trace.steps[-1].step.result["error"]["code"] == "runtime_task_failed"
+
+
+@pytest.mark.asyncio
 async def test_repository_returns_task_trace_with_steps_and_logs() -> None:
     repository = InMemoryRuntimeRepository()
     manager = AgentManager.for_tests(repository=repository)
@@ -284,6 +446,12 @@ async def test_run_agent_fails_fast_when_model_key_missing() -> None:
 def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
     app = create_app()
     manager = AgentManager.for_tests(repository=InMemoryRuntimeRepository())
+    manager._services = RuntimeNodeServices(
+        memory=manager._services.memory,
+        model=SlowMockModelAdapter(),
+        tools=manager._services.tools,
+        repository=manager._services.repository,
+    )
     fake_resources = SimpleNamespace(
         db_engine=object(),
         redis_client=object(),
@@ -318,19 +486,52 @@ def test_agent_api_routes(monkeypatch: MonkeyPatch) -> None:
         assert run_response.status_code == 200
         run_payload = run_response.json()
         assert run_payload["code"] == 1
-        assert run_payload["data"]["status"] == "completed"
+        assert run_payload["data"]["status"] == "running"
+        assert run_payload["data"]["thread_id"] == "thread-api"
 
         pause_response = client.post(
             f"/api/v1/agents/pause?agent_id={agent_id}",
             json={"thread_id": "thread-api"},
         )
-        assert pause_response.status_code == 400
+        assert pause_response.status_code == 200
+        pause_payload = pause_response.json()
+        assert pause_payload["code"] == 1
+        assert pause_payload["data"]["status"] in {"pausing", "paused"}
 
-        status_response = client.get(f"/api/v1/agents/status?agent_id={agent_id}")
-        assert status_response.status_code == 200
-        status_payload = status_response.json()
+        deadline = time.monotonic() + 2.0
+        latest_status_payload: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            status_response = client.get(f"/api/v1/agents/status?agent_id={agent_id}")
+            assert status_response.status_code == 200
+            latest_status_payload = status_response.json()
+            if latest_status_payload["data"]["latest_task"]["status"] == "paused":
+                break
+            time.sleep(0.02)
+        assert latest_status_payload is not None
+        assert latest_status_payload["data"]["latest_task"]["status"] == "paused"
+
+        resume_response = client.post(
+            f"/api/v1/agents/resume?agent_id={agent_id}",
+            json={"thread_id": "thread-api"},
+        )
+        assert resume_response.status_code == 200
+        resume_payload = resume_response.json()
+        assert resume_payload["code"] == 1
+        assert resume_payload["data"]["status"] == "running"
+
+        deadline = time.monotonic() + 2.0
+        status_payload: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            status_response = client.get(f"/api/v1/agents/status?agent_id={agent_id}")
+            assert status_response.status_code == 200
+            status_payload = status_response.json()
+            if status_payload["data"]["latest_task"]["status"] == "completed":
+                break
+            time.sleep(0.02)
+        assert status_payload is not None
         assert status_payload["code"] == 1
         assert status_payload["data"]["latest_task"]["thread_id"] == "thread-api"
+        assert status_payload["data"]["latest_task"]["status"] == "completed"
 
         task_id = run_payload["data"]["task_id"]
         trace_response = client.get(f"/api/v1/tasks/{task_id}/trace")
@@ -406,7 +607,7 @@ def test_internal_error_response_contains_diagnostics(monkeypatch: MonkeyPatch) 
 
     monkeypatch.setattr(app_module, "init_resources", fake_init_resources, raising=False)
     monkeypatch.setattr(app_module, "close_resources", fake_close_resources, raising=False)
-    monkeypatch.setattr(manager, "run_agent", boom)
+    monkeypatch.setattr(manager, "start_agent_run", boom)
 
     with TestClient(app, raise_server_exceptions=False) as client:
         app.state.agent_manager = manager

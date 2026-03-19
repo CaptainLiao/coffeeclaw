@@ -6,8 +6,8 @@ from src.api.dependencies import get_agent_manager, get_orchestrator_manager
 from src.api.schemas import (
     AgentPauseRequest,
     AgentResumeRequest,
+    AgentRunAcceptedResponse,
     AgentRunRequest,
-    AgentRunResponse,
     AgentStatusResponse,
     AgentSummaryResponse,
     CreateAgentRequest,
@@ -47,21 +47,25 @@ async def create_agent(
     return SuccessResponse(data=AgentSummaryResponse(**result))
 
 
-@api_router.post("/agents/run", response_model=SuccessResponse[AgentRunResponse], tags=["agents"])
+@api_router.post(
+    "/agents/run",
+    response_model=SuccessResponse[AgentRunAcceptedResponse],
+    tags=["agents"],
+)
 async def run_agent(
     agent_id: Annotated[str, Query(description="Agent ID")],
     request: AgentRunRequest,
     manager: Annotated[AgentManager, Depends(get_agent_manager)],
-) -> SuccessResponse[AgentRunResponse]:
+) -> SuccessResponse[AgentRunAcceptedResponse]:
     try:
-        result = await manager.run_agent(
+        result = await manager.start_agent_run(
             agent_id,
             goal=request.goal,
             thread_id=request.thread_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return SuccessResponse(data=AgentRunResponse(**result))
+    return SuccessResponse(data=AgentRunAcceptedResponse(**result))
 
 
 @api_router.get(
@@ -102,22 +106,22 @@ async def pause_agent(
 
 @api_router.post(
     "/agents/resume",
-    response_model=SuccessResponse[AgentRunResponse],
+    response_model=SuccessResponse[AgentRunAcceptedResponse],
     tags=["agents"],
 )
 async def resume_agent(
     agent_id: Annotated[str, Query(description="Agent ID")],
     request: AgentResumeRequest,
     manager: Annotated[AgentManager, Depends(get_agent_manager)],
-) -> SuccessResponse[AgentRunResponse]:
+) -> SuccessResponse[AgentRunAcceptedResponse]:
     try:
-        result = await manager.resume_agent(
+        result = await manager.start_agent_resume(
             agent_id,
             thread_id=request.thread_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return SuccessResponse(data=AgentRunResponse(**result))
+    return SuccessResponse(data=AgentRunAcceptedResponse(**result))
 
 
 @api_router.get(

@@ -93,9 +93,11 @@ Agent Runtime 是 CoffeeClaw 的核心，基于 **LangGraph** 实现 `感知(sen
 - [x] 实现 `AgentManager` 类，负责：
   - `create_agent(config_path)` → 创建 Agent 实例，写入 `agents` 表，状态 `created`
   - `initialize_agent(agent_id)` → 绑定 Memory、注册工具、连接模型，状态 `initialized`
-  - `run_agent(agent_id, goal, thread_id)` → 启动核心循环，状态 `running`
-  - `pause_agent(agent_id)` → 保存 Checkpoint，状态 `paused`
-  - `resume_agent(agent_id, thread_id)` → 从 Checkpoint 恢复，状态 `running`
+  - `run_agent(agent_id, goal, thread_id)` → 内部阻塞式执行核心循环
+  - `start_agent_run(agent_id, goal, thread_id)` → API 提交后台任务，立即返回 `running`
+  - `pause_agent(agent_id)` → 请求暂停当前运行任务，步级生效
+  - `resume_agent(agent_id, thread_id)` → 内部阻塞式恢复执行
+  - `start_agent_resume(agent_id, thread_id)` → API 提交后台恢复任务，立即返回 `running`
   - `get_agent_status(agent_id)` → 查询当前状态与最新 step 信息
 
 ### 6. Postgres Checkpoint（`src/runtime/checkpoint.py`）
@@ -105,10 +107,10 @@ Agent Runtime 是 CoffeeClaw 的核心，基于 **LangGraph** 实现 `感知(sen
 
 ### 7. API 接口（`src/api/routes.py` 扩展）
 - [x] `POST /agents` — 创建 Agent（接收 `agent_config_path` 或内联配置 JSON）
-- [x] `POST /agents/run?agent_id=...` — 启动 Agent 执行任务（`{"goal": "...", "thread_id": "..."}`）
+- [x] `POST /agents/run?agent_id=...` — 提交 Agent 任务并立即返回 `task_id`
 - [x] `GET /agents/status?agent_id=...` — 查询 Agent 状态
-- [x] `POST /agents/pause?agent_id=...` — 暂停 Agent
-- [x] `POST /agents/resume?agent_id=...` — 恢复 Agent（传入 `thread_id`）
+- [x] `POST /agents/pause?agent_id=...` — 请求暂停 Agent
+- [x] `POST /agents/resume?agent_id=...` — 提交恢复执行请求（传入 `thread_id`）
 
 ### 8. 示例 Agent 配置（`configs/agents/`）
 - [x] 创建 `configs/agents/demo-agent.md`，参考 PRD 2.1.3 节示例格式，用于验收测试
@@ -126,7 +128,8 @@ Agent Runtime 是 CoffeeClaw 的核心，基于 **LangGraph** 实现 `感知(sen
 
 - 当前 `sense / think / act` 使用了 runtime 内部的临时 mock 适配器，目的是先把 Task 02 的核心循环、checkpoint、恢复和 API 跑通。
 - 真实的 LiteLLM、Short-term Memory 检索策略和 Docker 工具执行器将分别在 Task 03 / 04 / 05 中替换，不需要重写 `graph` 与 `lifecycle` 主干。
-- `pause_agent()` 当前语义是“状态置为 paused，并允许后续基于 checkpoint 恢复”，不是运行中强制中断。
+- 当前 HTTP `run / resume` 已调整为后台执行语义，最终完成状态通过 `status` / `trace` 查询。
+- 当前 `pause_agent()` 为“步级实时暂停”：当前 step 结束后尽快暂停，不会强杀正在执行中的工具调用。
 
 ## 本次验收记录
 

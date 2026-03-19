@@ -51,6 +51,13 @@ class AgentMessageResponse(BaseModel):
     content: Any
 
 
+class AgentRunAcceptedResponse(BaseModel):
+    agent_id: str
+    task_id: str
+    thread_id: str
+    status: str
+
+
 class AgentRunResponse(BaseModel):
     agent_id: str
     task_id: str

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
-from typing import Any, cast
+from threading import Lock
+from typing import Any, ClassVar, cast
 
+import structlog
 import yaml  # type: ignore[import-untyped,unused-ignore]
 from langchain_core.messages import HumanMessage, messages_to_dict
 from langchain_core.runnables import RunnableConfig
@@ -33,6 +36,7 @@ from src.tools.registry import ToolRegistry
 from src.tools.skills import SkillManager
 
 FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
+logger = structlog.get_logger(__name__)
 
 
 class ModelConfig(BaseModel):
@@ -129,6 +133,9 @@ class AgentConfigParser:
 
 
 class AgentManager:
+    _operation_locks: ClassVar[dict[str, asyncio.Lock]] = {}
+    _operation_locks_guard: ClassVar[Lock] = Lock()
+
     def __init__(
         self,
         *,
@@ -147,6 +154,7 @@ class AgentManager:
         self._skill_manager = skill_manager or SkillManager()
         self._graphs: dict[str, CompiledStateGraph[Any, Any, Any, Any]] = {}
         self._configs: dict[str, AgentConfig] = {}
+        self._background_tasks: dict[str, asyncio.Task[None]] = {}
 
         if memory_adapter is None:
             memory_adapter = InMemoryShortTermMemoryAdapter()
@@ -157,6 +165,15 @@ class AgentManager:
             tools=RegistryToolExecutor(tool_caller=self._tool_caller),
             repository=repository,
         )
+
+    @classmethod
+    def _get_agent_lock(cls, agent_id: str) -> asyncio.Lock:
+        with cls._operation_locks_guard:
+            lock = cls._operation_locks.get(agent_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                cls._operation_locks[agent_id] = lock
+        return lock
 
     def _build_model_adapter(self, runtime_settings: Settings, use_mock_model: bool) -> Any:
         if use_mock_model:
@@ -279,61 +296,77 @@ class AgentManager:
         stop_after_steps: int | None = None,
     ) -> dict[str, Any]:
         self._ensure_model_ready()
-        if agent_id not in self._graphs:
-            await self.initialize_agent(agent_id)
-
-        agent = await self._repository.get_agent(agent_id)
-        if agent is None:
-            raise ValueError(f"Agent {agent_id} not found.")
-
-        resumable_task = await self._repository.get_resumable_task(agent_id, thread_id)
-        if resumable_task is not None:
-            raise ValueError(
-                f"Thread {thread_id} already has {resumable_task.status} task "
-                f"{resumable_task.id}. Use resume for this thread or a new thread_id."
+        async with self._get_agent_lock(agent_id):
+            await self._ensure_agent_initialized(agent_id)
+            task = await self._prepare_new_task(agent_id=agent_id, goal=goal, thread_id=thread_id)
+        try:
+            state = await self._run_loop(
+                agent_id=agent_id,
+                goal=task.goal,
+                thread_id=thread_id,
+                task_id=task.id,
+                stop_after_steps=stop_after_steps,
+                resume=False,
             )
-        task = await self._repository.create_task(
-            agent_id=agent_id,
-            goal=goal,
-            thread_id=thread_id,
-            status="running",
-        )
+            return await self._finalize_result(agent_id, task.id, state)
+        except Exception as exc:
+            await self._mark_task_failed(agent_id=agent_id, task_id=task.id, exc=exc)
+            raise
 
-        await self._repository.update_agent_status(agent_id, "running")
-        await self._repository.update_task_status(
-            task.id,
-            status="running",
-            current_step=task.current_step,
-        )
-
-        state = await self._run_loop(
-            agent_id=agent_id,
-            goal=task.goal,
-            thread_id=thread_id,
-            task_id=task.id,
-            stop_after_steps=stop_after_steps,
-            resume=False,
-        )
-        return await self._finalize_result(agent_id, task.id, state)
+    async def start_agent_run(
+        self,
+        agent_id: str,
+        *,
+        goal: str,
+        thread_id: str,
+    ) -> dict[str, Any]:
+        self._ensure_model_ready()
+        async with self._get_agent_lock(agent_id):
+            await self._ensure_agent_initialized(agent_id)
+            task = await self._prepare_new_task(agent_id=agent_id, goal=goal, thread_id=thread_id)
+            self._spawn_background_task(
+                agent_id=agent_id,
+                task_id=task.id,
+                goal=task.goal,
+                thread_id=thread_id,
+                resume=False,
+            )
+            return self._build_accepted_response(
+                agent_id=agent_id,
+                task_id=task.id,
+                thread_id=thread_id,
+            )
 
     async def pause_agent(self, agent_id: str, *, thread_id: str) -> dict[str, Any]:
-        task = await self._repository.get_resumable_task(agent_id, thread_id)
-        if task is None:
-            latest_task = await self._repository.get_task_by_thread(agent_id, thread_id)
-            if latest_task is None:
+        async with self._get_agent_lock(agent_id):
+            task = await self._repository.get_task_by_thread(agent_id, thread_id)
+            if task is None:
                 raise ValueError(f"No task found for agent {agent_id} and thread {thread_id}.")
+            if task.status == "paused":
+                return {"agent_id": agent_id, "status": "paused"}
+            if task.status == "pausing":
+                return {"agent_id": agent_id, "status": "pausing"}
+            if task.status != "running":
+                raise ValueError(
+                    f"Task {task.id} cannot be paused because "
+                    f"it is in status '{task.status}'."
+                )
+            if task.id not in self._background_tasks:
+                raise ValueError(
+                    f"Task {task.id} is not active in the current worker "
+                    "and cannot be paused in real time."
+                )
+            if await self._repository.request_task_pause(task.id):
+                return {"agent_id": agent_id, "status": "pausing"}
+            latest_task = await self._repository.get_task(task.id)
+            if latest_task is None:
+                raise ValueError(f"Task {task.id} not found.")
+            if latest_task.status in {"paused", "pausing"}:
+                return {"agent_id": agent_id, "status": latest_task.status}
             raise ValueError(
                 f"Task {latest_task.id} cannot be paused because "
                 f"it is in status '{latest_task.status}'."
             )
-
-        await self._repository.update_task_status(
-            task.id,
-            status="paused",
-            current_step=task.current_step,
-        )
-        await self._repository.update_agent_status(agent_id, "paused")
-        return {"agent_id": agent_id, "status": "paused"}
 
     async def resume_agent(
         self,
@@ -343,42 +376,68 @@ class AgentManager:
         stop_after_steps: int | None = None,
     ) -> dict[str, Any]:
         self._ensure_model_ready()
-        if agent_id not in self._graphs:
-            await self.initialize_agent(agent_id)
-
-        task = await self._repository.get_resumable_task(agent_id, thread_id)
-        if task is None:
-            latest_task = await self._repository.get_task_by_thread(agent_id, thread_id)
-            if latest_task is None:
-                raise ValueError(f"No task found for agent {agent_id} and thread {thread_id}.")
-            message = (
-                f"Task {latest_task.id} cannot be resumed because "
-                f"it is in status '{latest_task.status}'."
+        async with self._get_agent_lock(agent_id):
+            await self._ensure_agent_initialized(agent_id)
+            task = await self._prepare_resume_task(agent_id=agent_id, thread_id=thread_id)
+        try:
+            state = await self._run_loop(
+                agent_id=agent_id,
+                goal=task.goal,
+                thread_id=thread_id,
+                task_id=task.id,
+                stop_after_steps=stop_after_steps,
+                resume=True,
             )
-            raise ValueError(
-                message
+            return await self._finalize_result(agent_id, task.id, state)
+        except Exception as exc:
+            await self._mark_task_failed(agent_id=agent_id, task_id=task.id, exc=exc)
+            raise
+
+    async def start_agent_resume(
+        self,
+        agent_id: str,
+        *,
+        thread_id: str,
+    ) -> dict[str, Any]:
+        self._ensure_model_ready()
+        async with self._get_agent_lock(agent_id):
+            await self._ensure_agent_initialized(agent_id)
+            task = await self._prepare_resume_task(agent_id=agent_id, thread_id=thread_id)
+            self._spawn_background_task(
+                agent_id=agent_id,
+                task_id=task.id,
+                goal=task.goal,
+                thread_id=thread_id,
+                resume=True,
             )
-        if task.status != "paused":
-            raise ValueError(
-                f"Task {task.id} is in status '{task.status}', only paused tasks can be resumed."
+            return self._build_accepted_response(
+                agent_id=agent_id,
+                task_id=task.id,
+                thread_id=thread_id,
             )
 
-        await self._repository.update_agent_status(agent_id, "running")
-        await self._repository.update_task_status(
-            task.id,
-            status="running",
-            current_step=task.current_step,
-        )
+    async def shutdown(self) -> None:
+        tasks = list(self._background_tasks.values())
+        if not tasks:
+            return
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
-        state = await self._run_loop(
-            agent_id=agent_id,
-            goal=task.goal,
-            thread_id=thread_id,
-            task_id=task.id,
-            stop_after_steps=stop_after_steps,
-            resume=True,
-        )
-        return await self._finalize_result(agent_id, task.id, state)
+    async def recover_interrupted_tasks(self) -> int:
+        active_tasks = await self._repository.list_tasks_by_status({"running", "pausing"})
+        if not active_tasks:
+            return 0
+        for task in active_tasks:
+            await self._mark_task_failed(
+                agent_id=task.agent_id,
+                task_id=task.id,
+                exc=RuntimeError(
+                    "Task was interrupted because the worker process restarted before completion."
+                ),
+            )
+        return len(active_tasks)
 
     async def get_agent_status(self, agent_id: str) -> dict[str, Any]:
         agent = await self._repository.get_agent(agent_id)
@@ -456,6 +515,170 @@ class AgentManager:
             ],
         }
 
+    async def _ensure_agent_initialized(self, agent_id: str) -> None:
+        if agent_id not in self._graphs:
+            await self.initialize_agent(agent_id)
+
+    async def _prepare_new_task(
+        self,
+        *,
+        agent_id: str,
+        goal: str,
+        thread_id: str,
+    ) -> Any:
+        agent = await self._repository.get_agent(agent_id)
+        if agent is None:
+            raise ValueError(f"Agent {agent_id} not found.")
+
+        active_task = await self._repository.get_agent_active_task(agent_id)
+        if active_task is not None:
+            if active_task.thread_id == thread_id:
+                raise ValueError(
+                    f"Thread {thread_id} already has {active_task.status} task "
+                    f"{active_task.id}. Use resume for this thread or a new thread_id."
+                )
+            raise ValueError(
+                f"Agent {agent_id} already has active task {active_task.id} "
+                f"on thread {active_task.thread_id}."
+            )
+
+        task = await self._repository.create_task(
+            agent_id=agent_id,
+            goal=goal,
+            thread_id=thread_id,
+            status="running",
+        )
+        await self._repository.update_agent_status(agent_id, "running")
+        await self._repository.update_task_status(
+            task.id,
+            status="running",
+            current_step=task.current_step,
+        )
+        return task
+
+    async def _prepare_resume_task(self, *, agent_id: str, thread_id: str) -> Any:
+        task = await self._repository.get_task_by_thread(agent_id, thread_id)
+        if task is None:
+            raise ValueError(f"No task found for agent {agent_id} and thread {thread_id}.")
+        if task.status != "paused":
+            raise ValueError(
+                f"Task {task.id} cannot be resumed because "
+                f"it is in status '{task.status}'."
+            )
+        await self._repository.update_agent_status(agent_id, "running")
+        await self._repository.update_task_status(
+            task.id,
+            status="running",
+            current_step=task.current_step,
+        )
+        return task
+
+    def _spawn_background_task(
+        self,
+        *,
+        agent_id: str,
+        task_id: str,
+        goal: str,
+        thread_id: str,
+        resume: bool,
+    ) -> None:
+        if task_id in self._background_tasks:
+            raise ValueError(f"Task {task_id} is already active in this worker.")
+        background_task = asyncio.create_task(
+            self._run_task_in_background(
+                agent_id=agent_id,
+                task_id=task_id,
+                goal=goal,
+                thread_id=thread_id,
+                resume=resume,
+            )
+        )
+        self._background_tasks[task_id] = background_task
+
+    async def _run_task_in_background(
+        self,
+        *,
+        agent_id: str,
+        task_id: str,
+        goal: str,
+        thread_id: str,
+        resume: bool,
+    ) -> None:
+        try:
+            state = await self._run_loop(
+                agent_id=agent_id,
+                goal=goal,
+                thread_id=thread_id,
+                task_id=task_id,
+                stop_after_steps=None,
+                resume=resume,
+            )
+            await self._finalize_result(agent_id, task_id, state)
+        except asyncio.CancelledError:
+            logger.warning("Background task cancelled", agent_id=agent_id, task_id=task_id)
+            await self._mark_task_failed(
+                agent_id=agent_id,
+                task_id=task_id,
+                exc=RuntimeError("Background execution cancelled."),
+            )
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Background task failed",
+                agent_id=agent_id,
+                task_id=task_id,
+                thread_id=thread_id,
+                exc_info=exc,
+            )
+            await self._mark_task_failed(agent_id=agent_id, task_id=task_id, exc=exc)
+        finally:
+            self._background_tasks.pop(task_id, None)
+
+    async def _mark_task_failed(self, *, agent_id: str, task_id: str, exc: Exception) -> None:
+        task = await self._repository.get_task(task_id)
+        current_step = task.current_step if task is not None else 0
+        step_index = current_step + 1
+        try:
+            await self._repository.create_task_step(
+                task_id=task_id,
+                step_index=step_index,
+                action_type="error",
+                plan={"decision": "abort"},
+                result={
+                    "status": "failed",
+                    "error": {
+                        "code": "runtime_task_failed",
+                        "type": exc.__class__.__name__,
+                        "message": str(exc),
+                    },
+                },
+                model_used="runtime-manager",
+            )
+        except Exception:
+            step_index = current_step
+
+        await self._repository.update_agent_status(agent_id, "failed")
+        await self._repository.update_task_status(
+            task_id,
+            status="failed",
+            current_step=step_index,
+            completed=True,
+        )
+
+    def _build_accepted_response(
+        self,
+        *,
+        agent_id: str,
+        task_id: str,
+        thread_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "agent_id": agent_id,
+            "task_id": task_id,
+            "thread_id": thread_id,
+            "status": "running",
+        }
+
     async def _run_loop(
         self,
         *,
@@ -493,32 +716,48 @@ class AgentManager:
         next_input: AgentState | None = None if resume else initial_state
         while True:
             state = cast(AgentState, await graph.ainvoke(cast(Any, next_input), config=config))
-            await self._repository.update_task_status(
-                task_id,
-                status=state["status"] if state["status"] != "running" else "running",
-                current_step=state["step_count"],
-                completed=state["status"] in {"completed", "failed", "escalate"},
-            )
-
-            if (
-                stop_after_steps is not None
-                and state["step_count"] >= stop_after_steps
-                and state["status"] == "running"
-            ):
-                await self._repository.update_agent_status(agent_id, "paused")
+            if state["status"] in {"completed", "failed", "escalate"}:
                 await self._repository.update_task_status(
                     task_id,
-                    status="paused",
+                    status=state["status"],
                     current_step=state["step_count"],
+                    completed=True,
                 )
-                state["status"] = "paused"
-                state["reflection"] = f"Paused after {state['step_count']} steps."
                 return state
 
-            if state["status"] in {"completed", "failed", "escalate"}:
+            await self._repository.update_task_progress(
+                task_id,
+                current_step=state["step_count"],
+            )
+            persisted_task = await self._repository.get_task(task_id)
+            if persisted_task is None:
+                raise ValueError(f"Task {task_id} not found.")
+
+            if stop_after_steps is not None and state["step_count"] >= stop_after_steps:
+                await self._pause_after_step(agent_id=agent_id, task_id=task_id, state=state)
+                return state
+
+            if persisted_task.status == "pausing":
+                await self._pause_after_step(agent_id=agent_id, task_id=task_id, state=state)
                 return state
 
             next_input = None
+
+    async def _pause_after_step(
+        self,
+        *,
+        agent_id: str,
+        task_id: str,
+        state: AgentState,
+    ) -> None:
+        await self._repository.update_agent_status(agent_id, "paused")
+        await self._repository.update_task_status(
+            task_id,
+            status="paused",
+            current_step=state["step_count"],
+        )
+        state["status"] = "paused"
+        state["reflection"] = f"Paused after {state['step_count']} steps."
 
     async def _finalize_result(
         self,

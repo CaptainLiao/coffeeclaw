@@ -171,6 +171,14 @@ class RuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def request_task_pause(self, task_id: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def update_task_progress(self, task_id: str, *, current_step: int) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     async def update_task_status(
         self,
         task_id: str,
@@ -190,7 +198,11 @@ class RuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_resumable_task(self, agent_id: str, thread_id: str) -> TaskRecord | None:
+    async def get_agent_active_task(self, agent_id: str) -> TaskRecord | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_tasks_by_status(self, statuses: set[str]) -> list[TaskRecord]:
         raise NotImplementedError
 
     @abstractmethod
@@ -316,7 +328,9 @@ class SqlRuntimeRepository(RuntimeRepository):
     async def create_task(self, *, agent_id: str, goal: str, thread_id: str, status: str) -> TaskRecord:
         task_id = str(uuid.uuid4())
         now = utcnow()
-        dag = {"thread_id": thread_id}
+        dag = {
+            "thread_id": thread_id,
+        }
         async with self._engine.begin() as connection:
             await connection.execute(
                 text(
@@ -337,6 +351,38 @@ class SqlRuntimeRepository(RuntimeRepository):
                 },
             )
         return TaskRecord(task_id, agent_id, goal, thread_id, status, 0, dag, now)
+
+    async def request_task_pause(self, task_id: str) -> bool:
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    UPDATE tasks
+                    SET status = 'pausing'
+                    WHERE id = :id
+                      AND status = 'running'
+                    """
+                ),
+                {"id": task_id},
+            )
+        return bool(result.rowcount)
+
+    async def update_task_progress(self, task_id: str, *, current_step: int) -> None:
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                text(
+                    """
+                    UPDATE tasks
+                    SET current_step = :current_step
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": task_id,
+                    "current_step": current_step,
+                },
+            )
+        _ensure_updated(result.rowcount, entity_name="Task", entity_id=task_id)
 
     async def update_task_status(
         self,
@@ -398,7 +444,7 @@ class SqlRuntimeRepository(RuntimeRepository):
             row = result.mappings().first()
         return _to_task_record(row) if row is not None else None
 
-    async def get_resumable_task(self, agent_id: str, thread_id: str) -> TaskRecord | None:
+    async def get_agent_active_task(self, agent_id: str) -> TaskRecord | None:
         async with self._engine.connect() as connection:
             result = await connection.execute(
                 text(
@@ -406,16 +452,35 @@ class SqlRuntimeRepository(RuntimeRepository):
                     SELECT id, agent_id, goal, thread_id, status, dag, current_step, created_at, completed_at
                     FROM tasks
                     WHERE agent_id = :agent_id
-                      AND thread_id = :thread_id
-                      AND status IN ('running', 'paused')
+                      AND status IN ('running', 'pausing', 'paused')
                     ORDER BY created_at DESC
                     LIMIT 1
                     """
                 ),
-                {"agent_id": agent_id, "thread_id": thread_id},
+                {"agent_id": agent_id},
             )
             row = result.mappings().first()
         return _to_task_record(row) if row is not None else None
+
+    async def list_tasks_by_status(self, statuses: set[str]) -> list[TaskRecord]:
+        if not statuses:
+            return []
+        placeholders = ", ".join(f":status_{idx}" for idx, _ in enumerate(statuses))
+        params = {f"status_{idx}": status for idx, status in enumerate(statuses)}
+        async with self._engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    f"""
+                    SELECT id, agent_id, goal, thread_id, status, dag, current_step, created_at, completed_at
+                    FROM tasks
+                    WHERE status IN ({placeholders})
+                    ORDER BY created_at ASC
+                    """
+                ),
+                params,
+            )
+            rows = result.mappings().all()
+        return [_to_task_record(row) for row in rows]
 
     async def get_latest_task(self, agent_id: str) -> TaskRecord | None:
         async with self._engine.connect() as connection:
@@ -648,9 +713,35 @@ class InMemoryRuntimeRepository(RuntimeRepository):
         return candidates[0] if candidates else None
 
     async def create_task(self, *, agent_id: str, goal: str, thread_id: str, status: str) -> TaskRecord:
-        task = TaskRecord(str(uuid.uuid4()), agent_id, goal, thread_id, status, 0, {"thread_id": thread_id}, utcnow())
+        task = TaskRecord(
+            str(uuid.uuid4()),
+            agent_id,
+            goal,
+            thread_id,
+            status,
+            0,
+            {
+                "thread_id": thread_id,
+            },
+            utcnow(),
+        )
         self.tasks[task.id] = task
         return task
+
+    async def request_task_pause(self, task_id: str) -> bool:
+        task = self.tasks.get(task_id)
+        if task is None:
+            raise ValueError(f"Task {task_id} not found.")
+        if task.status != "running":
+            return False
+        task.status = "pausing"
+        return True
+
+    async def update_task_progress(self, task_id: str, *, current_step: int) -> None:
+        task = self.tasks.get(task_id)
+        if task is None:
+            raise ValueError(f"Task {task_id} not found.")
+        task.current_step = current_step
 
     async def update_task_status(
         self,
@@ -676,16 +767,19 @@ class InMemoryRuntimeRepository(RuntimeRepository):
         candidates.sort(key=lambda task: task.created_at, reverse=True)
         return candidates[0] if candidates else None
 
-    async def get_resumable_task(self, agent_id: str, thread_id: str) -> TaskRecord | None:
+    async def get_agent_active_task(self, agent_id: str) -> TaskRecord | None:
         candidates = [
             task
             for task in self.tasks.values()
-            if task.agent_id == agent_id
-            and task.thread_id == thread_id
-            and task.status in {"running", "paused"}
+            if task.agent_id == agent_id and task.status in {"running", "pausing", "paused"}
         ]
         candidates.sort(key=lambda task: task.created_at, reverse=True)
         return candidates[0] if candidates else None
+
+    async def list_tasks_by_status(self, statuses: set[str]) -> list[TaskRecord]:
+        candidates = [task for task in self.tasks.values() if task.status in statuses]
+        candidates.sort(key=lambda task: task.created_at)
+        return candidates
 
     async def get_latest_task(self, agent_id: str) -> TaskRecord | None:
         candidates = [task for task in self.tasks.values() if task.agent_id == agent_id]

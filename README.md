@@ -182,12 +182,24 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8000/health | Select-Object 
 
 ## 工具与技能接口
 
+- `POST /api/v1/agents/run`：提交单 Agent 任务，立即返回 `task_id` 和 `running`
+- `GET /api/v1/agents/status`：查看 Agent 当前状态和最近任务
+- `POST /api/v1/agents/pause`：请求暂停当前运行任务，返回 `pausing` 或 `paused`
+- `POST /api/v1/agents/resume`：恢复已暂停任务，立即返回 `running`
+- `GET /api/v1/tasks/{task_id}/trace`：查看任务最终状态、步骤和工具日志
 - `GET /api/v1/tools`：查看已注册工具
 - `GET /api/v1/tools/{tool_name}`：查看工具定义详情
 - `POST /api/v1/tools/{tool_name}/test`：直接测试工具调用
 - `GET /api/v1/skills`：查看已加载技能
 - `GET /api/v1/orchestrator/agents`：查看可用专家 Agent
 - `POST /api/v1/orchestrator/run`：发起多 Agent 协作任务
+
+单 Agent 运行控制说明：
+
+- `run` / `resume` 现在是后台执行语义，不会同步等待任务结束
+- 任务是否完成，请通过 `status` 或 `trace` 轮询确认
+- `pausing` 表示暂停请求已接收；如果当前 step 恰好完成并且任务直接结束，最终状态也可能是 `completed`
+- 当前暂停语义是“步级暂停”：当前 step 结束后尽快暂停，不会强杀正在执行中的工具调用
 
 示例（PowerShell）：
 
